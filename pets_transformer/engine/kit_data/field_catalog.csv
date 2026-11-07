@@ -1,0 +1,476 @@
+dataset,table,column,privacy_role,data_kind,subtype,art9_special_category,description,traps
+health,ed_visits,visit_id,record_key,identifier,RECORD_ID,False,Visit identifier ED25-NNNNNN,Sequential in arrival order: reveals visit order and approximate time.
+health,ed_visits,patient_hetu,direct_identifier,identifier,NATIONAL_ID,False,"Finnish personal identity code (synthetic, individual number 900-999)",Encodes birth date (DDMMYY + century sign) and sex (odd/even individual number). Blank for unidentified and non-resident patients.
+health,ed_visits,patient_name,direct_identifier,name,PERSON_NAME,False,"Patient name, 'Lastname Given names'","Variants for the same person: uppercase surname, dropped middle names, typos; 'Tuntematon mies/nainen' for unidentified arrivals."
+health,ed_visits,date_of_birth,quasi_identifier,temporal,BIRTH_DATE,False,Date of birth,Redundant with patient_hetu.
+health,ed_visits,sex,quasi_identifier,categorical,SEX,False,M/F,Also derivable from patient_hetu.
+health,ed_visits,phone,direct_identifier,contact,PHONE,False,"Patient mobile phone, mixed formats",Swedish numbers for some non-residents.
+health,ed_visits,home_address,direct_identifier,location,STREET_ADDRESS,False,Street address,~2 % also contain postcode and city; foreign city for non-residents.
+health,ed_visits,postcode,quasi_identifier,location,POSTCODE,False,Home postcode (real Southwest Finland postcodes),Rural postcodes have very few residents.
+health,ed_visits,municipality,quasi_identifier,location,MUNICIPALITY,False,Home municipality,'non-resident' marks rare foreign visitors.
+health,ed_visits,arrival_ts,quasi_identifier,temporal,TIMESTAMP,False,Arrival time (local),Minute precision links to news clips and social posts.
+health,ed_visits,arrival_mode,quasi_identifier,categorical,CATEGORY,False,walk-in / ambulance / helicopter / police,Helicopter arrivals are rare and newsworthy.
+health,ed_visits,ambulance_unit,quasi_identifier,code,DEVICE_ID,False,Ambulance unit call sign AU-<base>-NN or MEDHELI-N,Base code reveals the patient's area even when postcode is removed.
+health,ed_visits,triage,sensitive_attribute,categorical,HEALTH_DATA,True,Finnish ABCDE triage (A most urgent),Urgency is health information.
+health,ed_visits,chief_complaint,free_text,text,FREE_TEXT,True,Short free-text reason for visit (fi/sv/en),Occasionally names a workplace or a place (spans in metadata/pii_spans).
+health,ed_visits,icd10_primary,sensitive_attribute,code,DIAGNOSIS_CODE,True,Primary ICD-10 diagnosis,Mental health (F) and pregnancy (O) codes; rare codes are near-unique.
+health,ed_visits,icd10_secondary,sensitive_attribute,code,DIAGNOSIS_CODE,True,"Up to two secondary ICD-10 codes, pipe-separated","Rare chronic diseases (E84.0 cystic fibrosis, G12.2 ALS, D66 haemophilia A) single out patients across visits."
+health,ed_visits,systolic_bp,sensitive_attribute,numerical,MEASUREMENT,True,Systolic blood pressure mmHg,Swapped systolic/diastolic in a few rows.
+health,ed_visits,diastolic_bp,sensitive_attribute,numerical,MEASUREMENT,True,Diastolic blood pressure mmHg,
+health,ed_visits,heart_rate,sensitive_attribute,numerical,MEASUREMENT,True,Heart rate /min,"Glitch values 0, 250, 300."
+health,ed_visits,resp_rate,sensitive_attribute,numerical,MEASUREMENT,True,Respiratory rate /min,
+health,ed_visits,temp_c,sensitive_attribute,numerical,MEASUREMENT,True,Body temperature °C,A few values recorded in °F.
+health,ed_visits,spo2,sensitive_attribute,numerical,MEASUREMENT,True,Oxygen saturation %,0 = sensor not attached.
+health,ed_visits,pain_nrs,sensitive_attribute,numerical,MEASUREMENT,True,Pain 0-10,
+health,ed_visits,attending_physician_id,technical_identifier,identifier,EMPLOYEE_ID,False,Staff id of attending physician,Staff are data subjects too; shift patterns identify them.
+health,ed_visits,attending_physician_name,direct_identifier,name,PERSON_NAME,False,Attending physician name,
+health,ed_visits,discharge_ts,quasi_identifier,temporal,TIMESTAMP,False,Discharge / departure time,~0.15 % earlier than arrival (data-entry error).
+health,ed_visits,los_minutes,sensitive_attribute,numerical,HEALTH_DATA,True,Length of stay in minutes,Blank where discharge_ts is erroneous.
+health,ed_visits,disposition,sensitive_attribute,categorical,HEALTH_DATA,True,home / admitted_ward / icu / transfer / died / left_without_being_seen / cancelled_duplicate,cancelled_duplicate rows are double registrations of a real visit.
+health,ed_visits,readmit_30d,sensitive_attribute,categorical,HEALTH_DATA,True,1 if the same patient returned within 30 days,Derived by linking visits of one patient.
+health,lab_results,lab_id,record_key,identifier,RECORD_ID,False,Lab result identifier,
+health,lab_results,visit_id,technical_identifier,identifier,RECORD_ID,False,Foreign key to ed_visits,Join key: pseudonymise consistently or the tables cannot be linked.
+health,lab_results,test_code,non_sensitive,code,CATEGORY,False,Finnish-style lab code (e.g. P-CRP),
+health,lab_results,test_name,non_sensitive,categorical,CATEGORY,False,Test name in English,
+health,lab_results,value,sensitive_attribute,numerical,HEALTH_DATA,True,"Result; numeric for quantitative tests, POS/NEG for PCR, '<3'/'<5' below detection",Mixed types. P-Etanol (blood alcohol) and U-hCG (pregnancy) are especially sensitive.
+health,lab_results,unit,non_sensitive,categorical,CATEGORY,False,Unit,
+health,lab_results,ref_range,non_sensitive,categorical,CATEGORY,False,Reference range,"Sex-specific ranges (B-Hb, P-Krea) reveal the patient's sex."
+health,lab_results,abnormal_flag,sensitive_attribute,categorical,HEALTH_DATA,True,H / L / A (abnormal qualitative) / blank,
+health,lab_results,sampled_ts,quasi_identifier,temporal,TIMESTAMP,False,Sample time,Close to arrival_ts: re-links a de-keyed lab table to visits.
+health,clinical_notes,note_id,record_key,identifier,RECORD_ID,False,Note identifier,
+health,clinical_notes,visit_id,technical_identifier,identifier,RECORD_ID,False,Foreign key to ed_visits,
+health,clinical_notes,note_type,non_sensitive,categorical,CATEGORY,False,physician / nurse_triage,
+health,clinical_notes,author_staff_id,technical_identifier,identifier,EMPLOYEE_ID,False,Author staff id,
+health,clinical_notes,author_name,direct_identifier,name,PERSON_NAME,False,Author name,
+health,clinical_notes,written_ts,quasi_identifier,temporal,TIMESTAMP,False,Time written,
+health,clinical_notes,language,quasi_identifier,categorical,LANGUAGE,False,fi / sv / en,Swedish or English notes narrow the patient population.
+health,clinical_notes,note_text,free_text,text,FREE_TEXT,True,ED note (Tulosyy / Esitiedot / Nykytila / Status / Arvio),"Names of patients, relatives and staff; relatives' phones; home addresses; employers; dates; ages; some personal identity codes."
+health,published_weekly_stats,stat_id,record_key,identifier,RECORD_ID,False,Row id,
+health,published_weekly_stats,week,quasi_identifier,temporal,DATE,False,ISO week of arrival,
+health,published_weekly_stats,municipality,quasi_identifier,location,MUNICIPALITY,False,Home municipality,
+health,published_weekly_stats,age_band,quasi_identifier,categorical,AGE,False,10-year age band,
+health,published_weekly_stats,sex,quasi_identifier,categorical,SEX,False,M/F,
+health,published_weekly_stats,diagnosis_group,sensitive_attribute,categorical,HEALTH_DATA,True,Diagnosis group of primary ICD-10,
+health,published_weekly_stats,visits,non_sensitive,aggregate,AGGREGATE,False,Number of visits,"Unsuppressed: most cells are 1-2, so the 'anonymous' table discloses individuals when combined with news clips."
+mobility,stops,stop_id,record_key,identifier,RECORD_ID,False,Stop identifier,
+mobility,stops,name,non_sensitive,categorical,LOCATION_NAME,False,"Stop name (Finnish), usually a street name",
+mobility,stops,name_sv,non_sensitive,categorical,LOCATION_NAME,False,Swedish stop name where the municipality is bilingual,
+mobility,stops,lat,non_sensitive,location,GPS_COORDINATE,False,Stop latitude (synthetic placement),
+mobility,stops,lon,non_sensitive,location,GPS_COORDINATE,False,Stop longitude (synthetic placement),
+mobility,stops,postcode,non_sensitive,location,POSTCODE,False,Postcode area the stop lies in,
+mobility,stops,municipality,non_sensitive,location,MUNICIPALITY,False,Municipality,
+mobility,stops,district,non_sensitive,location,POSTCODE,False,District key (= nearest postcode centroid),
+mobility,stops,area,non_sensitive,location,LOCATION_NAME,False,Coarse area: municipality + 3-digit postcode prefix (used by OD tasks),
+mobility,stops,zone,non_sensitive,categorical,CATEGORY,False,Fare zone A/B,
+mobility,stops,lines,non_sensitive,categorical,CATEGORY,False,"Day lines serving the stop, pipe-separated",
+mobility,bike_stations,station_id,record_key,identifier,RECORD_ID,False,Bike parking zone id,
+mobility,bike_stations,name,non_sensitive,categorical,LOCATION_NAME,False,Zone name,
+mobility,bike_stations,lat,non_sensitive,location,GPS_COORDINATE,False,Zone centre latitude,
+mobility,bike_stations,lon,non_sensitive,location,GPS_COORDINATE,False,Zone centre longitude,
+mobility,bike_stations,capacity,non_sensitive,numerical,MEASUREMENT,False,Nominal capacity,
+mobility,cards,card_id,record_key,identifier,CARD_ID,False,Printed 16-digit travel card number (Luhn-valid). Also the join key to taps.,Printed on the physical card and visible to anyone handling it; the same person can own two cards (replacement).
+mobility,cards,card_type,quasi_identifier,categorical,CATEGORY,True,"Fare category: adult, child, student, senior, disability_discount",'disability_discount' reveals a disability (special-category health data).
+mobility,cards,registered,non_sensitive,categorical,CATEGORY,False,Personalised card (holder registered) yes/no,
+mobility,cards,issued_date,quasi_identifier,temporal,DATE,False,Card issue date,Replacement cards issued during the period link two card ids to one person.
+mobility,cards,holder_name,direct_identifier,name,PERSON_NAME,False,Registered holder name,A few typos.
+mobility,cards,holder_birth_date,quasi_identifier,temporal,BIRTH_DATE,False,Holder birth date (for discount eligibility),
+mobility,cards,holder_email,direct_identifier,contact,EMAIL,False,Holder email,"For children under 15 this is the GUARDIAN's email, so it identifies another person."
+mobility,cards,holder_phone,direct_identifier,contact,PHONE,False,"Holder phone, mixed formats",Guardian's phone for children.
+mobility,cards,holder_postcode,quasi_identifier,location,POSTCODE,False,Holder home postcode,
+mobility,cards,status,non_sensitive,categorical,CATEGORY,False,active / replaced,
+mobility,taps,tap_id,record_key,identifier,RECORD_ID,False,Boarding event id,
+mobility,taps,card_id,technical_identifier,identifier,CARD_ID,False,Card number of the boarding,Persistent pseudonym: links all trips of one person over 4 weeks (trajectory).
+mobility,taps,ts,quasi_identifier,temporal,TIMESTAMP,False,"Boarding time (local, seconds)","Together with stop, 3-4 boardings usually single out one card."
+mobility,taps,stop_id,quasi_identifier,location,LOCATION_NAME,False,Boarding stop; blank = GPS fault (~3 %),The first boarding of the day is usually the stop nearest home.
+mobility,taps,line,quasi_identifier,categorical,CATEGORY,False,Line; N1-N4 are Friday/Saturday night lines,
+mobility,taps,direction,non_sensitive,categorical,CATEGORY,False,Route direction 1/2 (lines run through the centre),
+mobility,taps,vehicle_id,non_sensitive,identifier,OTHER,False,Bus fleet number,Vehicle + minute narrows co-travellers (e.g. people on the same bus as a known person).
+mobility,taps,fare_product,quasi_identifier,categorical,CATEGORY,False,"season, value_*, transfer, double_tap",value_reduced reveals a disability-discount card.
+mobility,taps,amount_eur,non_sensitive,numerical,MEASUREMENT,False,Amount charged,
+mobility,bike_trips,trip_id,record_key,identifier,RECORD_ID,False,Trip id,
+mobility,bike_trips,user_account,direct_identifier,contact,EMAIL,False,App account name,~70 % of accounts are the user's personal email address; the rest are firstname+number handles.
+mobility,bike_trips,bike_id,non_sensitive,identifier,DEVICE_ID,False,Bike id,
+mobility,bike_trips,start_ts,quasi_identifier,temporal,TIMESTAMP,False,Trip start,
+mobility,bike_trips,end_ts,quasi_identifier,temporal,TIMESTAMP,False,Trip end,
+mobility,bike_trips,start_lat,quasi_identifier,location,GPS_COORDINATE,False,"Start latitude, ~1 m precision",Morning trip starts cluster within ~100 m of the user's home: home address inference.
+mobility,bike_trips,start_lon,quasi_identifier,location,GPS_COORDINATE,False,Start longitude,
+mobility,bike_trips,end_lat,quasi_identifier,location,GPS_COORDINATE,False,End latitude,"0.3 % GPS glitches (0,0 or jumps of ~40 km)."
+mobility,bike_trips,end_lon,quasi_identifier,location,GPS_COORDINATE,False,End longitude,
+mobility,bike_trips,start_station,quasi_identifier,location,LOCATION_NAME,False,Parking zone at start (blank = outside zones),
+mobility,bike_trips,end_station,quasi_identifier,location,LOCATION_NAME,False,Parking zone at end,
+mobility,bike_trips,distance_m,non_sensitive,numerical,MEASUREMENT,False,Ridden distance,
+mobility,bike_trips,duration_s,non_sensitive,numerical,DURATION,False,Duration in seconds,
+smart_city,sensors,sensor_id,record_key,identifier,RECORD_ID,False,Sensor id,
+smart_city,sensors,location_name,non_sensitive,categorical,LOCATION_NAME,False,Sensor location,
+smart_city,sensors,zone,non_sensitive,categorical,CATEGORY,False,Zone type,
+smart_city,sensors,lat,non_sensitive,location,GPS_COORDINATE,False,Sensor latitude,
+smart_city,sensors,lon,non_sensitive,location,GPS_COORDINATE,False,Sensor longitude,
+smart_city,sensors,installed,non_sensitive,temporal,DATE,False,Installation date,
+smart_city,wifi_probes,probe_id,record_key,identifier,RECORD_ID,False,Probe record id,
+smart_city,wifi_probes,sensor_id,quasi_identifier,location,LOCATION_NAME,False,Detecting sensor,
+smart_city,wifi_probes,ts,quasi_identifier,temporal,TIMESTAMP,False,Probe time (seconds),
+smart_city,wifi_probes,mac,technical_identifier,identifier,MAC_ADDRESS,False,Wi-Fi MAC address in the probe request,~78 % are randomised (locally administered bit set: 2nd hex digit 2/6/A/E) and rotate every ~12-30 min; the rest are hardware MACs that never change and track a phone across all days. The OUI prefix reveals the phone vendor.
+smart_city,wifi_probes,rssi_dbm,non_sensitive,numerical,MEASUREMENT,False,Signal strength,
+smart_city,wifi_probes,ssid_probed,quasi_identifier,text,OTHER,False,Network name in a directed probe (mostly blank),"Saved network names leak surnames ('Virtanen_koti'), first names ('Ainon iPhone') and employers ('AURAJOKI-STAFF')."
+smart_city,footfall_15min,count_id,record_key,identifier,RECORD_ID,False,Row id,
+smart_city,footfall_15min,sensor_id,non_sensitive,location,LOCATION_NAME,False,Sensor,
+smart_city,footfall_15min,interval_start,non_sensitive,temporal,TIMESTAMP,False,Start of 15-min interval,
+smart_city,footfall_15min,device_count,non_sensitive,aggregate,AGGREGATE,False,Distinct MACs seen in the interval; -1 = sensor outage,Night-time counts of 1-2 are small cells (a single resident walking home); rotating MACs inflate counts; -1 outage marker.
+smart_city,anpr_parking,event_id,record_key,identifier,RECORD_ID,False,Parking event id,
+smart_city,anpr_parking,car_park,quasi_identifier,location,LOCATION_NAME,False,Car park,
+smart_city,anpr_parking,plate,direct_identifier,identifier,LICENSE_PLATE,False,Registration plate read by the camera,Plates are linkable to owners via the vehicle register; ~2 % misreads (one character); ~3 % foreign plates.
+smart_city,anpr_parking,read_confidence,non_sensitive,numerical,MEASUREMENT,False,ANPR read confidence,Low confidence flags misreads.
+smart_city,anpr_parking,entry_ts,quasi_identifier,temporal,TIMESTAMP,False,Entry time,
+smart_city,anpr_parking,exit_ts,quasi_identifier,temporal,TIMESTAMP,False,Exit time (blank = still parked at period end),
+smart_city,anpr_parking,fee_eur,non_sensitive,numerical,FINANCIAL_DATA,False,Fee charged,
+smart_city,anpr_parking,payment_method,non_sensitive,categorical,CATEGORY,False,card / app / permit / unpaid,
+smart_city,anpr_parking,payment_card_masked,direct_identifier,identifier,PAYMENT_CARD,False,Masked card number (first 6 + last 4),First6+last4 is PCI-compliant display but still links the same card across events and to other datasets.
+smart_city,anpr_parking,payer_phone,direct_identifier,contact,PHONE,False,Phone number of the parking-app account,
+energy,customers,customer_id,record_key,identifier,CUSTOMER_ID,False,DSO customer number (contract holder).,"Stable across systems (invoices, customer service): a linkage key, not just a row id."
+energy,customers,metering_point_id,technical_identifier,identifier,METER_ID,False,18-digit GSRN metering point ID (prefix 643 = Finland); joins customers to readings.,Printed on invoices and in the national datahub; links to the address. Must stay joinable (consistently pseudonymised) for row-level scenarios.
+energy,customers,customer_name,direct_identifier,name,PERSON_NAME,False,Contract holder name; order varies ('Last Given names' or 'First Last').,Two name orders in one column.
+energy,customers,hetu,direct_identifier,identifier,NATIONAL_ID,False,"Finnish personal identity code (synthetic, temporary range 900-999); blank for ~12 %.","Encodes birth date, century and sex (odd/even individual number)."
+energy,customers,birth_date,quasi_identifier,temporal,BIRTH_DATE,False,Filled only when hetu is missing.,Complements hetu: the two columns together cover everyone.
+energy,customers,street_address,direct_identifier,location,STREET_ADDRESS,False,"Supply address (= home address), incl. staircase/apartment.",With metering point it pins one dwelling.
+energy,customers,postcode,quasi_identifier,location,POSTCODE,False,Postcode of the supply address (real GeoNames postcode).,Rural postcodes contain very few customers.
+energy,customers,municipality,quasi_identifier,location,MUNICIPALITY,False,Municipality of the supply address.,
+energy,customers,email,direct_identifier,contact,EMAIL,False,Invoice/contact e-mail (.example domains).,Local part often contains the name and birth year.
+energy,customers,phone,direct_identifier,contact,PHONE,False,"Contact phone; several formats (+358…, 040 …).",Inconsistent formats defeat naive regexes.
+energy,customers,contract_type,non_sensitive,categorical,CATEGORY,False,spot / fixed / time_of_use (night tariff).,time_of_use correlates with direct electric storage heating.
+energy,customers,heating_type,quasi_identifier,categorical,CATEGORY,False,"Main heating: district, direct_electric, ground_source_heat_pump, air_to_water_heat_pump, oil_and_electric.",Visible from the street for some types; rare types in small postcodes are identifying. Inferable from the load curve.
+energy,customers,floor_area_m2,quasi_identifier,numerical,MEASUREMENT,False,Heated floor area (m²).,Large houses are rare outliers.
+energy,customers,main_fuse_a,non_sensitive,numerical,MEASUREMENT,False,Main fuse size (A).,Reveals electric heating / EV.
+energy,customers,ev_charger,quasi_identifier,categorical,CATEGORY,False,Registered EV charger (yes/no).,Visible from the street; also detectable from night-time load.
+energy,customers,solar_pv_kw,quasi_identifier,numerical,MEASUREMENT,False,"Installed PV capacity (kW), 0 if none.",Rare and visible from aerial images.
+energy,customers,payment_method,non_sensitive,categorical,CATEGORY,False,e_invoice / direct_debit / email_invoice / paper_invoice.,Paper invoice correlates with old age.
+energy,customers,iban,direct_identifier,identifier,IBAN,False,"Bank account for direct debit (synthetic, bank id 9xx).",
+energy,customers,late_payment_count,sensitive_attribute,numerical,FINANCIAL_DATA,False,Late payments in the last 24 months.,Financial distress indicator; harmful if disclosed.
+energy,customers,payment_plan,sensitive_attribute,categorical,FINANCIAL_DATA,False,Active payment plan (true/false).,
+energy,customers,medical_device_priority,sensitive_attribute,categorical,HEALTH_DATA,True,Customer registered life-supporting medical equipment (priority outage notification).,Health data (GDPR Art. 9) hidden in an operational flag; rare (~1-2 %).
+energy,customers,contract_start,quasi_identifier,temporal,DATE,False,Contract start date (≈ moving-in date).,Move-in date is known to neighbours and in public moving notices.
+energy,customers,dso_notes,free_text,text,FREE_TEXT,True,"Free-text operator notes (Finnish, Swedish, English).","Contains names of neighbours/relatives, phone numbers, e-mails, dates, property IDs and health information."
+energy,meter_readings_hourly,reading_id,record_key,identifier,RECORD_ID,False,Row id of the hourly reading.,Sequential per metering point: row order groups a household's series.
+energy,meter_readings_hourly,metering_point_id,technical_identifier,identifier,METER_ID,False,GSRN; foreign key to customers.,
+energy,meter_readings_hourly,ts,quasi_identifier,temporal,TIMESTAMP,False,"Start of the hour (local time, Europe/Helsinki; no DST change in this period).","Hourly series reveal occupancy (vacations, night shifts, sauna times)."
+energy,meter_readings_hourly,kwh,sensitive_attribute,numerical,MEASUREMENT,False,"Net energy taken from the grid during the hour (kWh, 3 decimals); blank when missing.","Behavioural fingerprint: absences, EV charging, sauna, medical equipment base load; spikes 999.999/4321.5 are meter-swap artefacts."
+energy,meter_readings_hourly,quality,non_sensitive,categorical,CATEGORY,False,"'' = measured, E = estimated, M = missing, S = suspicious (meter swap).",
+energy,weather_hourly,obs_id,record_key,identifier,RECORD_ID,False,Row id.,
+energy,weather_hourly,ts,non_sensitive,temporal,TIMESTAMP,False,Hour (local time).,
+energy,weather_hourly,temperature_c,non_sensitive,numerical,MEASUREMENT,False,SYNTHETIC outdoor temperature for the Turku area (not FMI observations); includes a cold spell 6-13 Jan 2026.,
+energy,weather_hourly,wind_ms,non_sensitive,numerical,MEASUREMENT,False,SYNTHETIC wind speed (m/s).,
+energy,weather_hourly,cloud_oktas,non_sensitive,numerical,MEASUREMENT,False,SYNTHETIC cloud cover (0-8 oktas).,
+finance,customers,customer_id,record_key,identifier,CUSTOMER_ID,False,Bank customer number.,Used across bank systems; a linkage key.
+finance,customers,hetu,direct_identifier,identifier,NATIONAL_ID,False,"Finnish personal identity code (synthetic, range 900-999).",Encodes birth date and sex.
+finance,customers,full_name,direct_identifier,name,PERSON_NAME,False,All given names + surname (KYC).,Full given-name strings are much rarer than calling names; double-barrelled surnames.
+finance,customers,birth_date,quasi_identifier,temporal,BIRTH_DATE,False,Date of birth (KYC).,Redundant with hetu.
+finance,customers,street_address,direct_identifier,location,STREET_ADDRESS,False,Home address incl. apartment.,
+finance,customers,postcode,quasi_identifier,location,POSTCODE,False,Postcode.,
+finance,customers,city,quasi_identifier,location,MUNICIPALITY,False,Municipality.,
+finance,customers,email,direct_identifier,contact,EMAIL,False,Personal e-mail (.example).,
+finance,customers,phone,direct_identifier,contact,PHONE,False,Mobile phone (E.164).,
+finance,customers,iban,direct_identifier,identifier,IBAN,False,"Customer's main account (synthetic, bank id 9xx).",Appears again in transfers.from_iban / to_iban: join key between tables.
+finance,customers,income_band,sensitive_attribute,categorical,FINANCIAL_DATA,False,Declared annual gross income band.,90k+ band is small: outliers.
+finance,customers,occupation,quasi_identifier,categorical,OCCUPATION,False,Occupation group / life situation (KYC).,
+finance,customers,employer,quasi_identifier,categorical,ORG_NAME,False,Employer name (KYC).,Small employers + city + age often unique.
+finance,customers,pep_flag,sensitive_attribute,categorical,OTHER,False,Politically exposed person (AML).,"Flags public figures (councillors, MPs): easily re-identified and politically revealing."
+finance,customers,kyc_risk,sensitive_attribute,categorical,FINANCIAL_DATA,False,AML/KYC risk rating.,
+finance,customers,account_open_date,quasi_identifier,temporal,DATE,False,Date the customer relationship began.,
+finance,customers,preferred_language,quasi_identifier,categorical,LANGUAGE,False,Service language fi/sv/en.,Language is a proxy for origin; rare in small municipalities.
+finance,cards,card_ref_id,record_key,identifier,RECORD_ID,False,Card record id.,
+finance,cards,customer_id,technical_identifier,identifier,CUSTOMER_ID,False,Owner (FK customers).,
+finance,cards,card_pan,direct_identifier,identifier,PAYMENT_CARD,False,"Primary account number (public test BINs, Luhn-valid).",PCI DSS: must not be stored in clear outside the cardholder data environment. Reissued after fraud.
+finance,cards,card_type,non_sensitive,categorical,CATEGORY,False,debit / credit.,
+finance,cards,issued_date,quasi_identifier,temporal,DATE,False,Card issue date.,Issue date right after a fraud event marks victims.
+finance,cards,expiry,quasi_identifier,temporal,DATE,False,Expiry MM/YY.,Part of card data used in card-not-present fraud.
+finance,cards,status,non_sensitive,categorical,CATEGORY,False,active / closed_fraud.,
+finance,card_transactions,tx_id,record_key,identifier,RECORD_ID,False,Transaction id.,
+finance,card_transactions,card_pan,direct_identifier,identifier,PAYMENT_CARD,False,Card number used (FK cards).,Last 4 digits + time + amount appear on receipts (see adversary).
+finance,card_transactions,ts,quasi_identifier,temporal,TIMESTAMP,False,"Authorisation time (local, to the second).",Exact time + amount + merchant matches receipts and merchant logs.
+finance,card_transactions,amount_eur,quasi_identifier,numerical,FINANCIAL_DATA,False,Amount in EUR.,
+finance,card_transactions,original_amount,quasi_identifier,numerical,FINANCIAL_DATA,False,Amount in merchant currency.,
+finance,card_transactions,currency,quasi_identifier,categorical,CATEGORY,False,Merchant currency.,Reveals travel destination.
+finance,card_transactions,merchant_name,sensitive_attribute,categorical,ORG_NAME,True,Merchant (fictional).,"Reveals health (pharmacy, psychotherapy, fertility/addiction clinic), religion, politics, gambling."
+finance,card_transactions,mcc,sensitive_attribute,code,CATEGORY,True,ISO 18245 merchant category code.,"8099/8011/5912 health, 8661 religion, 8651 politics, 7995 gambling."
+finance,card_transactions,merchant_city,quasi_identifier,location,LOCATION_NAME,False,Merchant city.,
+finance,card_transactions,merchant_country,quasi_identifier,location,LOCATION_NAME,False,Merchant country (ISO 3166).,
+finance,card_transactions,channel,non_sensitive,categorical,CATEGORY,False,chip / contactless / ecom.,
+finance,card_transactions,pos_lat,quasi_identifier,location,GPS_COORDINATE,False,Merchant terminal latitude (card present).,Daily sequences reveal home and work areas.
+finance,card_transactions,pos_lon,quasi_identifier,location,GPS_COORDINATE,False,Merchant terminal longitude.,
+finance,card_transactions,device_id,technical_identifier,identifier,DEVICE_ID,False,E-commerce device fingerprint (UUID).,Stable per customer device: links purchases across merchants.
+finance,card_transactions,ip_address,technical_identifier,identifier,IP_ADDRESS,False,Shopper IP (CGNAT 100.64/10; fraud from RFC 5737 ranges).,Home IP is shared by a household and stable for months.
+finance,card_transactions,is_fraud,non_sensitive,categorical,CATEGORY,False,1 = confirmed fraud (chargeback).,Label noise: some fraud unlabelled.
+finance,card_transactions,fraud_type,non_sensitive,categorical,CATEGORY,False,card_testing / cnp_cashout / account_takeover / skimming / lost_stolen.,
+finance,transfers,transfer_id,record_key,identifier,RECORD_ID,False,Transfer id.,
+finance,transfers,booking_ts,quasi_identifier,temporal,TIMESTAMP,False,Booking time.,
+finance,transfers,direction,non_sensitive,categorical,CATEGORY,False,incoming / outgoing relative to the bank customer.,
+finance,transfers,from_iban,direct_identifier,identifier,IBAN,False,Payer account.,Customer IBANs link to customers.iban.
+finance,transfers,from_name,direct_identifier,name,PERSON_NAME,False,Payer name (persons and organisations).,Mixed column: person names and employer/pension-fund names; upper/lower case variants.
+finance,transfers,to_iban,direct_identifier,identifier,IBAN,False,Payee account (also LT/EE/LV for some outflows).,
+finance,transfers,to_name,sensitive_attribute,name,ORG_NAME,True,Payee name (persons and organisations).,"Trade unions, political parties, religious communities (Art. 9); 'Asunto Oy <street> <no>' reveals address."
+finance,transfers,amount_eur,quasi_identifier,numerical,FINANCIAL_DATA,False,Amount (EUR).,Salary amounts reveal income.
+finance,transfers,reference_number,technical_identifier,identifier,ACCOUNT_ID,False,Finnish creditor reference (check digit).,Stable per contract: links months together.
+finance,transfers,message,free_text,text,FREE_TEXT,True,Payer's free-text message (fi/sv/en).,"Names, child HETUs, phone numbers, e-mails, apartment numbers, health words."
+finance,transfers,transfer_type,non_sensitive,categorical,CATEGORY,False,salary / pension / standing_order / e_invoice / loan_payment / sepa / instant.,
+cyber,identity,identity_id,record_key,identifier,RECORD_ID,False,Row key of the directory export.,
+cyber,identity,employee_id,direct_identifier,identifier,EMPLOYEE_ID,False,HR employee number (MLX-#####).,
+cyber,identity,upn,direct_identifier,contact,EMAIL,False,User principal name = work e-mail firstname.lastname@meridian-logistics.example.,Name is readable inside the UPN; a hash of the UPN can be reversed with the staff list.
+cyber,identity,display_name,direct_identifier,name,PERSON_NAME,False,Full name.,
+cyber,identity,given_name,direct_identifier,name,PERSON_NAME,False,First name.,
+cyber,identity,surname,direct_identifier,name,PERSON_NAME,False,Surname.,Rare and double-barrelled surnames are unique.
+cyber,identity,department,quasi_identifier,categorical,ORG_NAME,False,Department.,"Small departments (Legal, HR) have few members."
+cyber,identity,job_title,quasi_identifier,categorical,OCCUPATION,False,Job title.,"Unique titles (CEO, CFO, IT Manager) identify one person."
+cyber,identity,manager_upn,direct_identifier,contact,EMAIL,False,Manager's UPN (reveals org chart).,
+cyber,identity,office,quasi_identifier,location,LOCATION_NAME,False,Work site.,
+cyber,identity,work_pattern,non_sensitive,categorical,CATEGORY,False,office / site / service.,
+cyber,identity,shift,quasi_identifier,categorical,CATEGORY,False,Shift for site workers.,
+cyber,identity,laptop_hostname,technical_identifier,identifier,HOSTNAME,False,Laptop hostname LT-<3 letters first><3 letters last>-####.,"Hostname encodes the user's name; it also appears in DNS, EDR and VPN logs."
+cyber,identity,mobile_phone,direct_identifier,contact,PHONE,False,Work mobile number (often the personal number).,
+cyber,identity,account_enabled,non_sensitive,categorical,CATEGORY,False,Account status.,Disabled account marks the compromised user.
+cyber,identity,last_password_change,quasi_identifier,temporal,DATE,False,Date of last password change.,svc-backup unchanged since 2023.
+cyber,identity,employment_start,quasi_identifier,temporal,DATE,False,Employment start date.,
+cyber,signin_logs,event_id,record_key,identifier,RECORD_ID,False,Sign-in event id.,
+cyber,signin_logs,ts_utc,quasi_identifier,temporal,TIMESTAMP,False,Sign-in time (UTC).,Work rhythm and shift patterns fingerprint users.
+cyber,signin_logs,upn,direct_identifier,contact,USERNAME,False,Signing-in account.,Must be pseudonymised consistently with the other logs or detections that join tables break.
+cyber,signin_logs,src_ip,technical_identifier,identifier,IP_ADDRESS,False,"Source IP (CGNAT home/mobile, office, hotel, hosting).",Home IPs are stable per user; attacker IPs are needed for threat-intel sharing.
+cyber,signin_logs,geo_country,quasi_identifier,location,LOCATION_NAME,False,Country of src_ip (synthetic geo database).,
+cyber,signin_logs,geo_city,quasi_identifier,location,LOCATION_NAME,False,City of src_ip.,Business travellers abroad are unique in a given week.
+cyber,signin_logs,geo_lat,quasi_identifier,location,GPS_COORDINATE,False,City latitude.,
+cyber,signin_logs,geo_lon,quasi_identifier,location,GPS_COORDINATE,False,City longitude.,
+cyber,signin_logs,user_agent,technical_identifier,identifier,USER_AGENT,False,Client user agent.,Attacker and spray tools have distinctive agents.
+cyber,signin_logs,client_app,non_sensitive,categorical,CATEGORY,False,Application signed into.,
+cyber,signin_logs,device_name,technical_identifier,identifier,HOSTNAME,False,"Device name (laptop hostname, kiosk, iPhone/Android).",Laptop hostnames contain names.
+cyber,signin_logs,result,non_sensitive,categorical,CATEGORY,False,success / failure / interrupted.,
+cyber,signin_logs,failure_reason,non_sensitive,categorical,CATEGORY,False,Error code and text.,
+cyber,signin_logs,mfa_method,non_sensitive,categorical,CATEGORY,False,MFA method.,
+cyber,signin_logs,mfa_result,non_sensitive,categorical,CATEGORY,False,MFA outcome (approved/denied/pending/timeout).,
+cyber,signin_logs,risk_level,non_sensitive,categorical,CATEGORY,False,Identity-protection risk level.,
+cyber,signin_logs,correlation_id,technical_identifier,identifier,RECORD_ID,False,Random correlation GUID (not linking).,
+cyber,signin_logs,attack_label,non_sensitive,categorical,CATEGORY,False,"Ground-truth MITRE ATT&CK technique id(s) for synthetic attack events, '|'-separated; empty = benign. Self-assessment only.",
+cyber,signin_logs,campaign_id,non_sensitive,categorical,CATEGORY,False,"Ground-truth campaign (C1 phishing chain, C2 password spray, C3 insider); empty = benign.",
+cyber,vpn_logs,event_id,record_key,identifier,RECORD_ID,False,VPN event id.,
+cyber,vpn_logs,ts_utc,quasi_identifier,temporal,TIMESTAMP,False,Event time (UTC).,
+cyber,vpn_logs,upn,direct_identifier,contact,USERNAME,False,VPN user.,
+cyber,vpn_logs,src_ip,technical_identifier,identifier,IP_ADDRESS,False,Public source IP.,Home IP links the user to a household.
+cyber,vpn_logs,geo_country,quasi_identifier,location,LOCATION_NAME,False,Country of src_ip.,
+cyber,vpn_logs,geo_city,quasi_identifier,location,LOCATION_NAME,False,City of src_ip.,
+cyber,vpn_logs,assigned_ip,technical_identifier,identifier,IP_ADDRESS,False,Internal VPN address (10.30.0.0/16).,"Joins VPN users to proxy, DNS and EDR events; must map consistently."
+cyber,vpn_logs,action,non_sensitive,categorical,CATEGORY,False,connect / disconnect.,
+cyber,vpn_logs,session_id,technical_identifier,identifier,RECORD_ID,False,VPN session GUID.,
+cyber,vpn_logs,bytes_in,non_sensitive,numerical,MEASUREMENT,False,Bytes received in session.,
+cyber,vpn_logs,bytes_out,non_sensitive,numerical,MEASUREMENT,False,Bytes sent in session.,Exfiltration night has a 4.4 GB outlier.
+cyber,vpn_logs,client_version,non_sensitive,categorical,CATEGORY,False,VPN client version.,
+cyber,vpn_logs,device_name,technical_identifier,identifier,HOSTNAME,False,Client device name.,Attacker device DESKTOP-7Q2M1KX is an IoC.
+cyber,vpn_logs,attack_label,non_sensitive,categorical,CATEGORY,False,"Ground-truth MITRE ATT&CK technique id(s) for synthetic attack events, '|'-separated; empty = benign. Self-assessment only.",
+cyber,vpn_logs,campaign_id,non_sensitive,categorical,CATEGORY,False,"Ground-truth campaign (C1 phishing chain, C2 password spray, C3 insider); empty = benign.",
+cyber,proxy_logs,event_id,record_key,identifier,RECORD_ID,False,Proxy event id.,
+cyber,proxy_logs,ts_utc,quasi_identifier,temporal,TIMESTAMP,False,Request time (UTC).,
+cyber,proxy_logs,src_ip,technical_identifier,identifier,IP_ADDRESS,False,Internal client IP (laptop or VPN address).,
+cyber,proxy_logs,upn,direct_identifier,contact,USERNAME,False,Authenticated proxy user.,
+cyber,proxy_logs,method,non_sensitive,categorical,CATEGORY,False,HTTP method.,
+cyber,proxy_logs,url,free_text,text,URL,False,Full URL including query string.,"Query strings leak e-mail addresses (notify=, login_hint=, u=, to=), session ids, OAuth state, access tokens and a live API key (api_key=mlk_demo_...)."
+cyber,proxy_logs,domain,quasi_identifier,categorical,URL,False,Destination domain.,
+cyber,proxy_logs,category,sensitive_attribute,categorical,CATEGORY,True,Web category.,"Health, Trade union, Religion and Job search categories reveal special-category or sensitive information about the user."
+cyber,proxy_logs,http_status,non_sensitive,categorical,CATEGORY,False,HTTP status.,
+cyber,proxy_logs,bytes_sent,non_sensitive,numerical,MEASUREMENT,False,Upload bytes.,
+cyber,proxy_logs,bytes_received,non_sensitive,numerical,MEASUREMENT,False,Download bytes.,
+cyber,proxy_logs,user_agent,technical_identifier,identifier,USER_AGENT,False,Client user agent.,
+cyber,proxy_logs,action,non_sensitive,categorical,CATEGORY,False,allowed / blocked.,
+cyber,proxy_logs,attack_label,non_sensitive,categorical,CATEGORY,False,"Ground-truth MITRE ATT&CK technique id(s) for synthetic attack events, '|'-separated; empty = benign. Self-assessment only.",
+cyber,proxy_logs,campaign_id,non_sensitive,categorical,CATEGORY,False,"Ground-truth campaign (C1 phishing chain, C2 password spray, C3 insider); empty = benign.",
+cyber,dns_logs,event_id,record_key,identifier,RECORD_ID,False,DNS event id.,
+cyber,dns_logs,ts_utc,quasi_identifier,temporal,TIMESTAMP,False,Query time (UTC).,
+cyber,dns_logs,client_ip,technical_identifier,identifier,IP_ADDRESS,False,Client internal IP.,
+cyber,dns_logs,client_hostname,technical_identifier,identifier,HOSTNAME,False,Client hostname.,Contains user names (LT-AINVIR-0423).
+cyber,dns_logs,query,quasi_identifier,categorical,URL,False,Queried name.,Health/union/job-search domains reveal sensitive interests.
+cyber,dns_logs,qtype,non_sensitive,categorical,CATEGORY,False,Record type.,
+cyber,dns_logs,rcode,non_sensitive,categorical,CATEGORY,False,Response code.,
+cyber,dns_logs,answer,technical_identifier,identifier,IP_ADDRESS,False,Resolved address.,
+cyber,dns_logs,attack_label,non_sensitive,categorical,CATEGORY,False,"Ground-truth MITRE ATT&CK technique id(s) for synthetic attack events, '|'-separated; empty = benign. Self-assessment only.",
+cyber,dns_logs,campaign_id,non_sensitive,categorical,CATEGORY,False,"Ground-truth campaign (C1 phishing chain, C2 password spray, C3 insider); empty = benign.",
+cyber,edr_alerts,alert_id,record_key,identifier,RECORD_ID,False,EDR alert id.,
+cyber,edr_alerts,ts_utc,quasi_identifier,temporal,TIMESTAMP,False,Alert time (UTC).,
+cyber,edr_alerts,hostname,technical_identifier,identifier,HOSTNAME,False,Endpoint hostname.,Laptop hostnames contain names.
+cyber,edr_alerts,device_ip,technical_identifier,identifier,IP_ADDRESS,False,Endpoint IP.,
+cyber,edr_alerts,upn,direct_identifier,contact,USERNAME,False,Logged-on user.,
+cyber,edr_alerts,severity,non_sensitive,categorical,CATEGORY,False,Alert severity.,
+cyber,edr_alerts,rule_name,non_sensitive,categorical,CATEGORY,False,Detection rule.,
+cyber,edr_alerts,mitre_technique,non_sensitive,categorical,CATEGORY,False,"Technique the EDR rule maps to (vendor mapping, not ground truth).",
+cyber,edr_alerts,process_name,non_sensitive,categorical,CATEGORY,False,Process.,
+cyber,edr_alerts,command_line,free_text,text,FREE_TEXT,False,Process command line.,"Contains user profile paths (C:\Users\firstname.lastname), file names like Palkkalaskelma/Sairauslomatodistus, and clear-text passwords (net use ... Sk4nneri#2025, 7z -p...)."
+cyber,edr_alerts,file_path,free_text,text,FREE_TEXT,False,File path.,User names and sensitive document names inside paths.
+cyber,edr_alerts,sha256,non_sensitive,identifier,OTHER,False,File/command hash (synthetic).,
+cyber,edr_alerts,analyst_verdict,non_sensitive,categorical,CATEGORY,False,SOC triage verdict.,
+cyber,edr_alerts,attack_label,non_sensitive,categorical,CATEGORY,False,"Ground-truth MITRE ATT&CK technique id(s) for synthetic attack events, '|'-separated; empty = benign. Self-assessment only.",
+cyber,edr_alerts,campaign_id,non_sensitive,categorical,CATEGORY,False,"Ground-truth campaign (C1 phishing chain, C2 password spray, C3 insider); empty = benign.",
+cyber,email_gateway,message_id,record_key,identifier,RECORD_ID,False,Gateway message id.,
+cyber,email_gateway,ts_utc,quasi_identifier,temporal,TIMESTAMP,False,Delivery time (UTC).,
+cyber,email_gateway,direction,non_sensitive,categorical,CATEGORY,False,inbound / outbound / internal.,
+cyber,email_gateway,sender,direct_identifier,contact,EMAIL,False,Sender address.,Insider's personal webmail address appears as a recipient.
+cyber,email_gateway,sender_display,direct_identifier,name,PERSON_NAME,False,Sender display name.,
+cyber,email_gateway,recipients,direct_identifier,contact,EMAIL,False,"Recipient addresses, ';'-separated.",Multi-valued field; pseudonymise each address consistently.
+cyber,email_gateway,subject,free_text,text,FREE_TEXT,True,Subject line.,"Subjects reveal sick leave, pregnancy, family leave, union fee changes (Art. 9), wage garnishment and disciplinary warnings."
+cyber,email_gateway,attachment_names,free_text,text,FREE_TEXT,False,"Attachment file names, ';'-separated.",Payslip and medical-certificate file names contain the employee's name.
+cyber,email_gateway,size_kb,non_sensitive,numerical,MEASUREMENT,False,Message size.,
+cyber,email_gateway,verdict,non_sensitive,categorical,CATEGORY,False,Gateway verdict.,Most phishing messages were delivered as 'clean'.
+cyber,email_gateway,spam_score,non_sensitive,numerical,MEASUREMENT,False,Spam score.,
+cyber,email_gateway,smtp_message_id,technical_identifier,identifier,RECORD_ID,False,SMTP Message-ID header.,
+cyber,email_gateway,attack_label,non_sensitive,categorical,CATEGORY,False,"Ground-truth MITRE ATT&CK technique id(s) for synthetic attack events, '|'-separated; empty = benign. Self-assessment only.",
+cyber,email_gateway,campaign_id,non_sensitive,categorical,CATEGORY,False,"Ground-truth campaign (C1 phishing chain, C2 password spray, C3 insider); empty = benign.",
+cyber,incident_tickets,ticket_id,record_key,identifier,RECORD_ID,False,Service-desk ticket id.,
+cyber,incident_tickets,created_utc,quasi_identifier,temporal,TIMESTAMP,False,Creation time (UTC).,
+cyber,incident_tickets,reporter_upn,direct_identifier,contact,USERNAME,False,Reporter.,
+cyber,incident_tickets,reporter_name,direct_identifier,name,PERSON_NAME,False,Reporter name.,
+cyber,incident_tickets,assignee_upn,direct_identifier,contact,USERNAME,False,IT staff assigned.,
+cyber,incident_tickets,category,non_sensitive,categorical,CATEGORY,False,Ticket category.,
+cyber,incident_tickets,priority,non_sensitive,categorical,CATEGORY,False,Priority.,
+cyber,incident_tickets,status,non_sensitive,categorical,CATEGORY,False,Status.,
+cyber,incident_tickets,title,non_sensitive,text,FREE_TEXT,False,Short title (templated).,
+cyber,incident_tickets,description,free_text,text,FREE_TEXT,False,Free-text description (Finnish/English).,"Names, phones, e-mails, usernames, hostnames, IMEIs, home IPs, national identity codes in onboarding tickets, clear-text passwords and health mentions. Exact spans in metadata/pii_spans."
+cyber,incident_tickets,resolution,non_sensitive,text,FREE_TEXT,False,Resolution note.,
+cyber,incident_tickets,attack_label,non_sensitive,categorical,CATEGORY,False,"Ground-truth MITRE ATT&CK technique id(s) for synthetic attack events, '|'-separated; empty = benign. Self-assessment only.",
+cyber,incident_tickets,campaign_id,non_sensitive,categorical,CATEGORY,False,"Ground-truth campaign (C1 phishing chain, C2 password spray, C3 insider); empty = benign.",
+cyber,geoip_ranges,range_id,record_key,identifier,RECORD_ID,False,Row key.,
+cyber,geoip_ranges,network,non_sensitive,identifier,IP_ADDRESS,False,CIDR block (documentation/shared ranges).,
+cyber,geoip_ranges,country,non_sensitive,categorical,LOCATION_NAME,False,Country code (synthetic assignment).,
+cyber,geoip_ranges,city,non_sensitive,categorical,LOCATION_NAME,False,City.,
+cyber,geoip_ranges,lat,non_sensitive,numerical,GPS_COORDINATE,False,City latitude.,
+cyber,geoip_ranges,lon,non_sensitive,numerical,GPS_COORDINATE,False,City longitude.,
+cyber,geoip_ranges,organisation,non_sensitive,categorical,ORG_NAME,False,Network owner (fictional).,
+cyber,geoip_ranges,network_type,non_sensitive,categorical,CATEGORY,False,residential / mobile / corporate / hotel / hosting / internal.,
+education,students,student_id,record_key,identifier,STUDENT_ID,False,School-system student number; first two digits are the start year.,Encodes start year (cohort).
+education,students,learner_id,direct_identifier,identifier,STUDENT_ID,False,National learner number (fictional OID-style format 1.9.999.24.x).,Persistent national identifier: links across all education registers.
+education,students,hetu,direct_identifier,identifier,NATIONAL_ID,False,Finnish personal identity code (temporary range 900-999).,Encodes birth date and sex.
+education,students,first_names,direct_identifier,name,PERSON_NAME,False,All given names.,
+education,students,last_name,direct_identifier,name,PERSON_NAME,False,Surname.,Rare and double-barrelled surnames are unique.
+education,students,birth_date,quasi_identifier,temporal,BIRTH_DATE,False,Date of birth.,Twins share birth date + address + surname.
+education,students,sex,quasi_identifier,categorical,SEX,False,Registered sex (M/F).,
+education,students,home_language,quasi_identifier,categorical,LANGUAGE,False,Registered mother tongue (ISO 639-1).,Rare languages are near-unique in small schools; origin proxy.
+education,students,street_address,direct_identifier,location,STREET_ADDRESS,False,Home street address.,
+education,students,postcode,quasi_identifier,location,POSTCODE,False,Home postcode.,
+education,students,municipality,quasi_identifier,location,MUNICIPALITY,False,Home municipality.,
+education,students,guardian1_name,direct_identifier,name,PERSON_NAME,False,Guardian name (third party).,Identifies a different person.
+education,students,guardian1_phone,direct_identifier,contact,PHONE,False,"Guardian phone, as typed (mixed formats).",
+education,students,guardian2_name,direct_identifier,name,PERSON_NAME,False,Second guardian name.,
+education,students,guardian2_phone,direct_identifier,contact,PHONE,False,Second guardian phone.,
+education,students,school_code,quasi_identifier,categorical,ORG_NAME,False,School code S01-S12.,
+education,students,school_name,quasi_identifier,categorical,ORG_NAME,False,School name (fictional).,IB school and Swedish school are small.
+education,students,programme,quasi_identifier,categorical,EDUCATION_DATA,False,Programme or vocational field.,"Small fields (Agriculture, Beauty care, sports line) give cells below 5."
+education,students,class_group,quasi_identifier,categorical,EDUCATION_DATA,False,Homeroom group; encodes school and start year.,
+education,students,start_date,quasi_identifier,temporal,DATE,False,Start of studies.,
+education,students,special_support,sensitive_attribute,categorical,HEALTH_DATA,True,Level of special support (none/intensified/special).,Proxy for disability or health; one student has a unique 'sign language interpreter' value.
+education,students,finnish_as_second_language,sensitive_attribute,categorical,SOCIAL_DATA,False,Studies Finnish as a second language (S2).,Proxy for migrant background / ethnic origin.
+education,students,status,sensitive_attribute,categorical,EDUCATION_DATA,False,active / graduated / dropped_out.,
+education,students,end_date,quasi_identifier,temporal,DATE,False,Graduation or drop-out date.,Exact drop-out date is near-unique.
+education,course_grades,grade_id,record_key,identifier,RECORD_ID,False,Grade row id.,
+education,course_grades,student_id,technical_identifier,identifier,STUDENT_ID,False,Links to students.,
+education,course_grades,school_code,quasi_identifier,categorical,ORG_NAME,False,School code.,
+education,course_grades,academic_year,non_sensitive,temporal,DATE,False,Academic year.,
+education,course_grades,period,non_sensitive,categorical,CATEGORY,False,"Period 1-5 (general), term/unit order elsewhere.",
+education,course_grades,course_code,quasi_identifier,code,EDUCATION_DATA,True,Course/module code (approximate 2021 curriculum style).,Religion modules UE/UO/UI/UK vs ET reveal religious affiliation (Art. 9); S2 modules reveal migrant background; MO/FINB reveal Swedish school.
+education,course_grades,course_name,quasi_identifier,categorical,EDUCATION_DATA,True,Course name.,Same as course_code.
+education,course_grades,credits,non_sensitive,numerical,MEASUREMENT,False,Credits (opintopisteet / osaamispisteet); 0 for IB.,
+education,course_grades,grade,sensitive_attribute,categorical,EDUCATION_DATA,False,"Grade: 4-10, S/H, vocational 1-5, IB 1-7.",Mixed scales; a few entries like '8+' from manual entry.
+education,course_grades,grade_scale,non_sensitive,categorical,CATEGORY,False,Scale of the grade.,
+education,course_grades,assessed_date,quasi_identifier,temporal,DATE,False,Date grade was recorded.,
+education,course_grades,teacher_name,direct_identifier,name,PERSON_NAME,False,"Teacher (staff member, third party).",Teachers are also identifiable persons.
+education,absences,absence_id,record_key,identifier,RECORD_ID,False,Row id.,
+education,absences,student_id,technical_identifier,identifier,STUDENT_ID,False,Links to students.,
+education,absences,academic_year,non_sensitive,temporal,DATE,False,Academic year.,
+education,absences,term,non_sensitive,categorical,CATEGORY,False,autumn / spring.,
+education,absences,excused_hours,sensitive_attribute,numerical,HEALTH_DATA,False,Excused absence hours (mostly illness).,Very high values indicate long illness.
+education,absences,unexcused_hours,sensitive_attribute,numerical,EDUCATION_DATA,False,Unexcused absence hours.,
+education,absences,late_arrivals,sensitive_attribute,numerical,EDUCATION_DATA,False,Count of late arrivals.,
+education,absences,school_code,quasi_identifier,categorical,ORG_NAME,False,School code.,
+education,matriculation_results,exam_result_id,record_key,identifier,RECORD_ID,False,Row id.,
+education,matriculation_results,student_id,technical_identifier,identifier,STUDENT_ID,False,Links to students.,
+education,matriculation_results,exam_session,quasi_identifier,temporal,DATE,False,"Session, e.g. 2024K (spring) / 2024S (autumn).",
+education,matriculation_results,subject_code,quasi_identifier,code,EDUCATION_DATA,True,Exam subject code.,UE/UO/ET reveal religion; A5 reveals Finnish as second language.
+education,matriculation_results,subject_name,quasi_identifier,categorical,EDUCATION_DATA,True,Exam subject.,
+education,matriculation_results,raw_points,sensitive_attribute,numerical,EDUCATION_DATA,False,Raw points.,Exact points across subjects form a unique fingerprint.
+education,matriculation_results,max_points,non_sensitive,numerical,MEASUREMENT,False,Maximum points for the exam.,
+education,matriculation_results,grade,sensitive_attribute,categorical,EDUCATION_DATA,False,Grade L/E/M/C/B/A/I.,
+education,matriculation_results,grade_points,sensitive_attribute,numerical,EDUCATION_DATA,False,Grade as number 0-7.,
+education,matriculation_results,exam_language,quasi_identifier,categorical,LANGUAGE,False,Exam language fi/sv.,
+education,counsellor_notes,note_id,record_key,identifier,RECORD_ID,False,Note id.,
+education,counsellor_notes,student_id,technical_identifier,identifier,STUDENT_ID,False,Links to students.,
+education,counsellor_notes,note_date,quasi_identifier,temporal,DATE,False,Date of the meeting.,
+education,counsellor_notes,author_name,direct_identifier,name,PERSON_NAME,False,Staff member who wrote the note.,
+education,counsellor_notes,author_role,non_sensitive,categorical,OCCUPATION,False,Role of the author.,
+education,counsellor_notes,language,quasi_identifier,categorical,LANGUAGE,False,Language of the note (fi/sv/en).,"sv = Swedish school, en = IB school: small populations."
+education,counsellor_notes,note_text,free_text,text,FREE_TEXT,True,"Student-welfare / guidance note. Contains names of the student, guardians and staff, phone numbers, addresses, dates, ages and health information.","Occasional personal identity code typed into the note; health, religion and family finances in plain text."
+public_admin,service_requests,request_id,record_key,identifier,RECORD_ID,False,Request id SR-<year>-<n>; '-D' suffix marks duplicate submissions.,
+public_admin,service_requests,ts_created,quasi_identifier,temporal,TIMESTAMP,False,Creation time (local).,~1 % exported as 'd.m.yyyy hh.mm'.
+public_admin,service_requests,channel,non_sensitive,categorical,CATEGORY,False,web / app / phone / email.,
+public_admin,service_requests,category,non_sensitive,categorical,CATEGORY,False,Request category (9 classes).,
+public_admin,service_requests,language,quasi_identifier,categorical,LANGUAGE,False,Language of the request (fi/sv/en).,English or Swedish requests in Finnish-speaking areas narrow the reporter down.
+public_admin,service_requests,description,free_text,text,FREE_TEXT,True,"Citizen's own description. Names of neighbours and relatives, addresses, phone numbers, emails, licence plates, health mentions.","Third parties (neighbours, relatives) are named; health information; ~2 % include a personal identity code."
+public_admin,service_requests,reporter_name,direct_identifier,name,PERSON_NAME,False,Reporter name (optional).,
+public_admin,service_requests,reporter_phone,direct_identifier,contact,PHONE,False,"Reporter phone, as typed.",
+public_admin,service_requests,reporter_email,direct_identifier,contact,EMAIL,False,Reporter email.,
+public_admin,service_requests,reporter_account_id,technical_identifier,identifier,ACCOUNT_ID,False,Persistent e-service account of a logged-in reporter.,Links all requests of one person; some accounts have 40-150 requests.
+public_admin,service_requests,street_address,quasi_identifier,location,STREET_ADDRESS,False,Address of the issue (often the reporter's own home or street).,
+public_admin,service_requests,postcode,quasi_identifier,location,POSTCODE,False,Postcode of the issue location.,
+public_admin,service_requests,municipality,non_sensitive,location,MUNICIPALITY,False,Municipality of the issue location.,
+public_admin,service_requests,lat,quasi_identifier,location,GPS_COORDINATE,False,Latitude of the issue (~25 m precision).,
+public_admin,service_requests,lon,quasi_identifier,location,GPS_COORDINATE,False,Longitude of the issue.,
+public_admin,service_requests,handler_name,direct_identifier,name,PERSON_NAME,False,Staff member handling the request.,
+public_admin,service_requests,status,non_sensitive,categorical,CATEGORY,False,closed / in_progress / forwarded / rejected / open.,
+public_admin,service_requests,ts_closed,quasi_identifier,temporal,TIMESTAMP,False,Closing time.,
+public_admin,service_requests,response_text,free_text,text,FREE_TEXT,False,"City's reply: repeats reporter first name, addresses, plates, handler name/phone/email.",Re-identifies the reporter even if reporter columns are dropped.
+public_admin,building_permits,permit_id,record_key,identifier,RECORD_ID,False,Permit id RL-<year>-<n>.,
+public_admin,building_permits,submitted_date,quasi_identifier,temporal,DATE,False,Application date.,
+public_admin,building_permits,applicant_type,non_sensitive,categorical,CATEGORY,False,private person / company.,
+public_admin,building_permits,applicant_name,direct_identifier,name,PERSON_NAME,False,Applicant (person or company name).,
+public_admin,building_permits,applicant_hetu,direct_identifier,identifier,NATIONAL_ID,False,Personal identity code of a private applicant.,
+public_admin,building_permits,applicant_business_id,technical_identifier,identifier,ORG_NAME,False,"Business ID (Y-tunnus format, fictional range) of a company applicant.",
+public_admin,building_permits,property_id,direct_identifier,identifier,PROPERTY_ID,False,Property identifier (kiinteistötunnus format; municipality code first).,Property ids are public registry keys that point to the owner.
+public_admin,building_permits,street_address,direct_identifier,location,STREET_ADDRESS,False,Property address.,
+public_admin,building_permits,postcode,quasi_identifier,location,POSTCODE,False,Postcode.,
+public_admin,building_permits,municipality,non_sensitive,location,MUNICIPALITY,False,Municipality.,
+public_admin,building_permits,lat,quasi_identifier,location,GPS_COORDINATE,False,Latitude (building).,
+public_admin,building_permits,lon,quasi_identifier,location,GPS_COORDINATE,False,Longitude (building).,
+public_admin,building_permits,project_type,non_sensitive,categorical,CATEGORY,False,Type of project.,
+public_admin,building_permits,floor_area_m2,quasi_identifier,numerical,MEASUREMENT,False,Floor area added (m²).,
+public_admin,building_permits,cost_estimate_eur,sensitive_attribute,numerical,FINANCIAL_DATA,False,Cost estimate (EUR).,Large outliers (developer projects).
+public_admin,building_permits,decision,non_sensitive,categorical,CATEGORY,False,Decision.,
+public_admin,building_permits,decision_date,quasi_identifier,temporal,DATE,False,Decision date.,
+public_admin,building_permits,case_officer,direct_identifier,name,PERSON_NAME,False,Building inspector handling the case.,
+customer_service,customers,customer_id,record_key,identifier,RECORD_ID,False,Row key of the customer extract.,
+customer_service,customers,customer_number,direct_identifier,identifier,CUSTOMER_ID,False,8-digit customer number printed on invoices; customers read it out on calls.,"Appears inside turns and agent notes, also as spoken digits."
+customer_service,customers,full_name,direct_identifier,name,PERSON_NAME,False,Customer name (calling name + surname).,
+customer_service,customers,hetu,direct_identifier,identifier,NATIONAL_ID,False,"Finnish personal identity code (synthetic, 900–999 range).",Encodes birth date and sex.
+customer_service,customers,street_address,direct_identifier,contact,STREET_ADDRESS,False,"Street, house number and apartment.",
+customer_service,customers,postcode,quasi_identifier,location,POSTCODE,False,"Postcode (real postcode, synthetic resident).",
+customer_service,customers,city,quasi_identifier,location,MUNICIPALITY,False,Municipality.,
+customer_service,customers,email,direct_identifier,contact,EMAIL,False,Personal email (.example domains).,
+customer_service,customers,phone,direct_identifier,contact,PHONE,False,Mobile number; ~8 % stored in non-E.164 formats.,Mixed formats.
+customer_service,customers,preferred_language,quasi_identifier,categorical,LANGUAGE,False,Service language fi/sv/en.,Correlates with origin; Swedish is rare outside archipelago municipalities.
+customer_service,customers,customer_since,quasi_identifier,temporal,DATE,False,Contract start date.,
+customer_service,customers,products,non_sensitive,categorical,CATEGORY,False,Pipe-separated products.,
+customer_service,customers,contract_number,direct_identifier,identifier,ACCOUNT_ID,False,Contract number.,
+customer_service,customers,payment_method,non_sensitive,categorical,CATEGORY,False,Payment method.,
+customer_service,customers,iban,direct_identifier,identifier,IBAN,False,"Bank account for direct debit (synthetic, bank id 9xx).",Empty unless direct debit.
+customer_service,customers,marketing_consent,non_sensitive,categorical,CATEGORY,False,Marketing consent flag.,
+customer_service,customers,payment_default_flag,sensitive_attribute,categorical,FINANCIAL_DATA,False,Customer has an overdue/defaulted payment record.,
+customer_service,customers,accessibility_needs,sensitive_attribute,categorical,HEALTH_DATA,True,Service adjustment (hearing/visual).,Health-related: GDPR Art. 9.
+customer_service,conversations,conversation_id,record_key,identifier,RECORD_ID,False,Conversation key.,
+customer_service,conversations,customer_id,technical_identifier,identifier,CUSTOMER_ID,False,Foreign key to customers.,Links all conversations of one person.
+customer_service,conversations,agent_id,technical_identifier,identifier,EMPLOYEE_ID,False,Agent employee code.,Employees are data subjects too.
+customer_service,conversations,agent_name,direct_identifier,name,PERSON_NAME,False,Agent's full name.,
+customer_service,conversations,channel,non_sensitive,categorical,CATEGORY,False,chat / phone (ASR transcript) / email.,
+customer_service,conversations,language,quasi_identifier,categorical,LANGUAGE,False,Conversation language.,
+customer_service,conversations,started_ts,quasi_identifier,temporal,TIMESTAMP,False,Start time (local).,Exact timestamps link to call logs.
+customer_service,conversations,intent,non_sensitive,categorical,CATEGORY,False,Labelled contact reason (15 classes).,
+customer_service,conversations,sentiment,non_sensitive,categorical,CATEGORY,False,Labelled customer sentiment.,
+customer_service,conversations,csat,non_sensitive,numerical,MEASUREMENT,False,Survey score 1–5 (~58 % missing).,
+customer_service,conversations,resolved,non_sensitive,categorical,CATEGORY,False,Resolved on first contact.,
+customer_service,conversations,handle_time_s,non_sensitive,numerical,DURATION,False,Agent handling time in seconds.,
+customer_service,conversations,n_turns,non_sensitive,numerical,MEASUREMENT,False,Number of turns.,
+customer_service,conversations,split,non_sensitive,categorical,CATEGORY,False,train (spans public) / eval (spans private).,
+customer_service,conversations,agent_note,free_text,text,FREE_TEXT,True,Agent's CRM wrap-up note (mostly Finnish).,"Agents copy ID codes, phone numbers, health remarks and relatives' names into notes."
+customer_service,turns,turn_id,record_key,identifier,RECORD_ID,False,Turn key.,
+customer_service,turns,conversation_id,technical_identifier,identifier,RECORD_ID,False,Foreign key.,
+customer_service,turns,seq,non_sensitive,numerical,OTHER,False,Order within conversation.,
+customer_service,turns,speaker,non_sensitive,categorical,CATEGORY,False,customer / agent / bot.,
+customer_service,turns,ts,quasi_identifier,temporal,TIMESTAMP,False,Turn time.,
+customer_service,turns,text,free_text,text,FREE_TEXT,True,"Utterance text (chat, ASR transcript, or email body).","Spoken digits, split numbers, spelled emails, card numbers, passwords, health mentions, third parties."

@@ -1,0 +1,36 @@
+{% load static %}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ctext y=%22.9em%22 font-size=%2290%22%3E%F0%9F%9B%A1%3C/text%3E%3C/svg%3E">
+<title>{% block title %}TrustED PETs Transformer{% endblock %}</title>
+<link rel="stylesheet" href="{% static 'wizard/app.css' %}">
+<script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.4/dist/htmx.min.js"></script>
+{% block head %}{% endblock %}
+</head>
+<body hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
+<header class="top"><div class="wrap">
+  <a class="logo" href="{% url 'home' %}">TrustED PETs Transformer<small>Protect the data, keep its value</small></a>
+  <span class="spacer"></span>
+  {% if job %}<span class="pill">{{ job.name }} · {{ job.n_rows }} × {{ job.n_cols }}</span>{% endif %}
+  <span class="pill">LLM {% if llm_enabled %}on{% else %}off{% endif %}</span>
+</div></header>
+<main class="wrap">
+  <nav class="progress">
+    {% for s in steps %}{% with i=forloop.counter %}
+      {% if i == step %}<span class="s cur"><span>{{ i }}</span>{{ s }}</span>
+      {% elif job and i == 1 %}<a class="s done" href="{% url 'data' job.id %}"><span>{{ i }}</span>{{ s }}</a>
+      {% elif job and i == 2 %}<a class="s done" href="{% url 'profile' job.id %}"><span>{{ i }}</span>{{ s }}</a>
+      {% elif job and i == 3 %}<a class="s {% if step > 3 %}done{% endif %}" href="{% url 'scenario' job.id %}"><span>{{ i }}</span>{{ s }}</a>
+      {% elif job and job.status == 'done' and i == 4 %}<a class="s done" href="{% url 'results' job.id %}"><span>{{ i }}</span>{{ s }}</a>
+      {% elif job and job.status == 'done' and i == 5 %}<a class="s {% if step > 5 %}done{% endif %}" href="{% url 'export' job.id %}"><span>{{ i }}</span>{{ s }}</a>
+      {% else %}<span class="s"><span>{{ i }}</span>{{ s }}</span>{% endif %}
+    {% endwith %}{% endfor %}
+  </nav>
+  {% block content %}{% endblock %}
+</main>
+<footer>Inspired by the European project TrustED (Horizon Europe GA No. 101168467) · Use only synthetic or approved data ·
+deterministic engine, optional LLM never decides a transformation</footer>
+{% block scripts %}{% endblock %}
+</body>
+</html>

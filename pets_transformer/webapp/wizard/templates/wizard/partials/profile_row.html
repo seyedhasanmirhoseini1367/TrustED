@@ -1,0 +1,28 @@
+{% load pets %}<tr id="row-{{ forloop.counter|default:p.name|slugify }}">
+  <td class="mono"><b>{{ p.name }}</b>{% if p.overridden %}<div class="hint">edited</div>{% endif %}</td>
+  <td>{{ p.dtype }}<div class="hint">{{ p.kind }}{% if p.ladder and p.ladder != p.kind %} · {{ p.ladder }} ladder{% endif %}</div></td>
+  <td class="nowrap">{{ p.unique_ratio|pct:0 }}</td>
+  <td class="nowrap">{{ p.missing_ratio|pct:0 }}</td>
+  <td class="mono" style="max-width:220px">{% for e in p.examples %}<div title="{{ e }}" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ e }}</div>{% endfor %}</td>
+  <td>
+    <select name="role" hx-post="{% url 'profile_update' job.id p.name %}" hx-trigger="change" hx-target="closest tr" hx-swap="outerHTML">
+      {% for r in roles %}<option value="{{ r }}" {% if r == p.role %}selected{% endif %}>{{ r }}</option>{% endfor %}
+    </select>
+    {% if p.subtype %}<div class="hint">{{ p.subtype }}</div>{% endif %}
+  </td>
+  <td class="nowrap"><span class="conf"><i style="width:{% widthratio p.confidence 1 100 %}%"></i></span>{{ p.confidence|num:2 }}
+    {% if llm_enabled and p.confidence < 0.7 %}<div><button class="btn small secondary" hx-post="{% url 'llm_suggest' job.id p.name %}" hx-target="next .llmout">Ask LLM</button><div class="llmout"></div></div>{% endif %}
+    {% if p.llm_suggestion %}<div class="llm">LLM: {{ p.llm_suggestion }}</div>{% endif %}
+  </td>
+  <td class="nowrap">
+    <span class="gate {{ p.gate }}">{{ p.gate }}</span><br>
+    <select name="gate" hx-post="{% url 'profile_update' job.id p.name %}" hx-trigger="change" hx-target="closest tr" hx-swap="outerHTML" style="margin-top:4px">
+      {% for g in gates %}<option value="{{ g }}" {% if g == p.gate %}selected{% endif %}>{{ g }}</option>{% endfor %}
+    </select>
+    {% if p.gate == "red" %}
+    <select name="red_action" hx-post="{% url 'profile_update' job.id p.name %}" hx-trigger="change" hx-target="closest tr" hx-swap="outerHTML" style="margin-top:4px">
+      {% for a in actions %}<option value="{{ a }}" {% if a == p.red_action %}selected{% endif %}>{{ a }}</option>{% endfor %}
+    </select>{% endif %}
+  </td>
+  <td style="min-width:220px">{{ p.reason }}<div class="hint">{{ p.gate_reason }}</div></td>
+</tr>

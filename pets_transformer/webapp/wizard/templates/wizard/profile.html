@@ -1,0 +1,19 @@
+{% extends "wizard/base.html" %}
+{% block content %}
+<h1>Step 2 — Profile review</h1>
+<p class="sub">{% if job.domain %}Looks like: <b>{{ job.domain }}</b> (used only to pick defaults). {% endif %}
+Roles are detected by rules (value patterns → column names → type/cardinality). Override any role or gate; changes save immediately.</p>
+<div class="card">
+  <div class="row" style="margin-bottom:8px">
+    <div><span class="gate red">red</span> fixed transform (drop / pseudonymise / truncate), excluded from the search</div>
+    <div><span class="gate yellow">yellow</span> search space: generalisation level chosen to meet the risk target</div>
+    <div><span class="gate green">green</span> unchanged (promoted to yellow if it measurably helps the attacker)</div>
+  </div>
+  <div class="tbl"><table>
+    <tr><th>Column</th><th>Type</th><th>Unique</th><th>Missing</th><th>Examples</th><th>Detected role</th><th>Confidence</th>
+        <th>Gate</th><th>Reason</th></tr>
+    {% for p in profiles %}{% include "wizard/partials/profile_row.html" %}{% endfor %}
+  </table></div>
+</div>
+<div class="actions"><a class="btn secondary" href="{% url 'data' job.id %}">← Back</a><a class="btn" href="{% url 'scenario' job.id %}">Continue → Scenario</a></div>
+{% endblock %}

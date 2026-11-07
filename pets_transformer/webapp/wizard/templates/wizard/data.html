@@ -1,0 +1,14 @@
+{% extends "wizard/base.html" %}
+{% block content %}
+<h1>Step 1 — Dataset loaded: {{ job.name }}</h1>
+<p class="sub"><b>{{ job.n_rows }}</b> rows × <b>{{ job.n_cols }}</b> columns{% if job.domain %} · looks like: <b>{{ job.domain }}</b>{% endif %}
+{% if job.has_gold %} · ground-truth PII spans available{% endif %}</p>
+{% if job.note %}<div class="banner"><b>Note:</b> {{ job.note }}</div>{% endif %}
+<div class="banner"><b>Use only synthetic or approved data.</b> The original file stays on this machine and is never exported.</div>
+<div class="actions" style="margin:8px 0"><a class="btn" href="{% url 'profile' job.id %}">Continue → Profile</a></div>
+<div class="card"><h2>First 10 rows</h2><div class="tbl"><table class="preview">
+<tr>{% for c in columns %}<th>{{ c }}</th>{% endfor %}</tr>
+{% for r in rows %}<tr>{% for v in r %}<td title="{{ v }}">{{ v }}</td>{% endfor %}</tr>{% endfor %}
+</table></div></div>
+<div class="actions"><a class="btn secondary" href="{% url 'home' %}">Start over</a><a class="btn" href="{% url 'profile' job.id %}">Continue → Profile</a></div>
+{% endblock %}

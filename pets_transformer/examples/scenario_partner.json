@@ -1,0 +1,9 @@
+{
+  "recipient": "partner",
+  "attacker_qis": ["date_of_birth", "gender", "postcode", "admission_date"],
+  "task_type": "classification",
+  "target": "readmitted_30d",
+  "key_columns": ["department", "length_of_stay"],
+  "description": "A hospital shares admissions data with an external research partner to build a 30-day readmission model. The attacker is assumed to know age/DOB, gender, postcode and admission date.",
+  "seed": 42
+}

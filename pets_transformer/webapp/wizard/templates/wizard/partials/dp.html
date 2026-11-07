@@ -1,0 +1,21 @@
+{% load pets %}
+<div class="row">
+  <div>
+    <p><b>{{ res.statistic }}{% if res.value_col %} of <code>{{ res.value_col }}</code>{% endif %} by <code>{{ res.group_col }}</code></b>
+      · ε = {{ res.epsilon }}, δ = 0 · {{ res.mechanism }} · unit of privacy: {{ res.unit_of_privacy }}
+      {% if res.clip %}· clipping [{{ res.clip.0|num:2 }}, {{ res.clip.1|num:2 }}]{% endif %}
+      · mean relative error <b>{{ res.mean_rel_error|pct:2 }}</b></p>
+    <div class="tbl" style="max-height:340px"><table><tr><th>Group</th><th>True</th><th>Noisy (released)</th><th>|error|</th></tr>
+      {% for x in rows %}<tr><td>{{ x.group }}</td><td>{{ x.true|num:2 }}</td><td><b>{{ x.noisy|num:2 }}</b></td><td>{{ x.abs_error|num:2 }}</td></tr>{% endfor %}
+    </table></div>
+  </div>
+  <div><div class="chartbox" style="height:300px"><canvas id="dpcurve"></canvas></div>
+    <p class="hint">Mean relative error vs. ε (10 seeded repeats). Smaller ε = stronger privacy, more noise.</p></div>
+</div>
+<script>
+(() => { const d = {{ chart|safe }};
+  new Chart(document.getElementById('dpcurve'), { type: 'line',
+    data: { labels: d.curve.map(p => p.epsilon), datasets: [{ label: 'mean relative error', data: d.curve.map(p => p.mean_rel_error), borderColor: '#5b7bd5', backgroundColor: '#5b7bd5' }] },
+    options: { maintainAspectRatio: false, animation: false, scales: { x: { title: { display: true, text: 'ε' } }, y: { beginAtZero: true, ticks: { callback: v => (v*100).toFixed(1) + ' %' } } } } });
+})();
+</script>

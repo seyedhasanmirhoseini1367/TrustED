@@ -1,0 +1,9 @@
+# never commit original data, outputs or secrets
+media/
+out/
+db.sqlite3
+.pets_secret
+.env
+__pycache__/
+*.pyc
+.pytest_cache/

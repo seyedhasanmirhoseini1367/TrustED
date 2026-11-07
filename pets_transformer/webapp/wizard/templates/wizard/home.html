@@ -1,0 +1,44 @@
+{% extends "wizard/base.html" %}
+{% block content %}
+<h1>Step 1 — Upload a dataset</h1>
+<p class="sub">The tool detects privacy risks, applies the <b>minimum sufficient</b> privacy-enhancing transformations for a sharing
+scenario, and proves with a simulated linkage attack and utility tests that risk dropped while value was kept.</p>
+<div class="banner"><b>Use only synthetic or approved data.</b> No real personal, customer or confidential data.</div>
+{% if error %}<div class="error" style="font-size:15px"><b>Upload failed:</b> {{ error }}</div>{% endif %}
+<div class="row">
+  <form class="card" method="post" action="{% url 'upload' %}" enctype="multipart/form-data" onsubmit="busy(this)">{% csrf_token %}
+    <h2>Upload CSV or XLSX</h2>
+    <div class="field"><label>Dataset</label><div class="hint">Larger files are reduced to a reproducible random sample of 50,000 rows.</div><input type="file" name="data" accept=".csv,.xlsx,.xls" required></div>
+    <div class="field"><label>Ground-truth PII spans (optional JSON)</label><input type="file" name="spans" accept=".json">
+      <div class="hint">If present, free-text redaction recall is measured against it.</div></div>
+    <button class="btn" type="submit">Upload and continue →</button>
+  </form>
+  <form class="card" method="post" action="{% url 'upload' %}" onsubmit="busy(this)">{% csrf_token %}
+    <input type="hidden" name="action" value="sample">
+    <h2>Or load the sample dataset</h2>
+    <p>5,000 synthetic hospital admissions from Southwest Finland: names, emails, phones, Finnish identity codes, dates of birth,
+      postcodes, ICD-10 diagnoses, lab values, clinician notes with embedded PII (ground-truth spans included) and a
+      30-day readmission label.</p>
+    <button class="btn" type="submit">Load sample dataset</button>
+  </form>
+</div>
+{% if jobs %}
+<div class="card"><h2>Recent jobs</h2><div class="tbl"><table class="jobs">
+<tr><th>Created</th><th>Dataset</th><th>Size</th><th>Status</th><th></th></tr>
+{% for j in jobs %}<tr><td>{{ j.created|date:"Y-m-d H:i" }}</td><td>{{ j.name }}</td><td>{{ j.n_rows }} × {{ j.n_cols }}</td>
+<td>{{ j.status }}</td><td>
+  {% if j.status == 'done' %}<a href="{% url 'results' j.id %}">results</a> · {% endif %}<a href="{% url 'profile' j.id %}">profile</a>
+  <form method="post" action="{% url 'delete' j.id %}" style="display:inline">{% csrf_token %}<button class="btn small secondary" type="submit">delete</button></form>
+</td></tr>{% endfor %}
+</table></div></div>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+function busy(form) {
+  const b = form.querySelector('button[type=submit]');
+  b.disabled = true;
+  b.innerHTML = '<span class="spinner"></span> Uploading and profiling… (large files take a while)';
+}
+</script>
+{% endblock %}

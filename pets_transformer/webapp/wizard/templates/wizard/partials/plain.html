@@ -1,0 +1,2 @@
+{% if plain %}<p>{{ plain|linebreaksbr }}</p><p class="hint">Written by Claude from the JSON report only (numbers copied, not generated). Included in the HTML report.</p>
+{% else %}<div class="error">No summary: the LLM is unavailable or declined. The rest of the report is unaffected.</div>{% endif %}

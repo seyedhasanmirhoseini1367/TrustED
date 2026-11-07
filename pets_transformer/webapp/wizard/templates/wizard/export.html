@@ -1,0 +1,30 @@
+{% extends "wizard/base.html" %}
+{% load pets %}
+{% block content %}
+<h1>Step 5 — Export</h1>
+<p class="sub">Protected outputs only. The original data and the pseudonymisation secret are never exported.</p>
+<div class="row">
+  <div class="card"><h2>Protected dataset</h2>
+    <p>{{ r.metrics.rows_released }} rows × {{ r.metrics.columns_released }} columns (from {{ r.metrics.rows_original }} × {{ r.metrics.columns_original }}).</p>
+    <a class="btn" href="{% url 'download' job.id 'protected.csv' %}">Download protected CSV</a>
+    {% if r.export.renamed_columns %}<p class="hint">Released under a new name: {% for a, b in r.export.renamed_columns.items %}<code>{{ a }}</code> → <code>{{ b }}</code> {% endfor %}</p>{% endif %}
+    <p class="hint">Same file name as the original table, original column names (starter-kit convention).</p></div>
+  <div class="card"><h2>Row map <span class="status bad">internal</span></h2>
+    <p><code>rowmap_&lt;table&gt;.csv</code> links each released row to its original record id ({{ r.export.record_key }}) so the
+      starter kit's <code>pets-eval scorecard</code> can score the release. <b>For scoring only — never publish it.</b></p>
+    <a class="btn secondary" href="{% url 'download' job.id 'rowmap.csv' %}">Download row map</a></div>
+  <div class="card"><h2>JSON report</h2><p>All metrics, decisions, scenario, threat model, seed and configuration (machine-readable).</p>
+    <a class="btn" href="{% url 'download' job.id 'report.json' %}">Download JSON report</a></div>
+  <div class="card"><h2>HTML report</h2><p>Printable report for the data owner or the judges (print to PDF from the browser).</p>
+    <a class="btn" href="{% url 'download' job.id 'report.html' %}">Download HTML report</a>
+    <a class="btn secondary" href="{% url 'report' job.id %}" target="_blank">Open</a></div>
+</div>
+<div class="card"><h2>Suitable for</h2>
+  <p><b>{{ r.scenario.recipient_label }}</b>{% if r.scenario.description %}: {{ r.scenario.description }}{% endif %}</p>
+  <p>{% if r.target_met %}The release meets the scenario target: linkage attack success {{ r.metrics.after.linkage|pct }}
+    (≤ {{ r.scenario.max_linkage|pct:0 }}), every equivalence class ≥ {{ r.metrics.after.min_k }} records.{% else %}
+    <span class="status bad">The target was not met</span> — do not release at this trust level; see residual risks.{% endif %}</p>
+  <p class="hint">Not suitable for a more open release (e.g. public open data) without re-running with that recipient's stricter target.</p>
+</div>
+<div class="actions"><a class="btn secondary" href="{% url 'results' job.id %}">← Back to results</a><a class="btn secondary" href="{% url 'home' %}">New dataset</a></div>
+{% endblock %}

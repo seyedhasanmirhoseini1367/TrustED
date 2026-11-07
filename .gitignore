@@ -1,0 +1,16 @@
+# environments and caches
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# never commit original data, outputs, secrets or local state
+pets_transformer/media/
+pets_transformer/out/
+pets_transformer/db.sqlite3
+pets_transformer/.pets_secret
+.env
+*.env
+
+# generated synthetic sample (recreated by data/generate_sample.py or the "Load sample dataset" button)
+pets_transformer/data/sample/
