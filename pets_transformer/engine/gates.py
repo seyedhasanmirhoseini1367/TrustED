@@ -153,7 +153,8 @@ def promote_green(df: pd.DataFrame, profiles: list[ColumnProfile], known: list[s
         rate = linkage_attack(df.loc[att_ids], df, known + [p.name])["success_rate"]
         if rate - base > PROMOTION_PP:
             p.gate = Gate.YELLOW
-            p.gate_reason = (f"promoted from green: adding it to the attacker's knowledge raises linkage success "
+            p.gate_reason = (f"promoted from green: adding it to the threat model's known attributes raises the "
+                             f"re-identification rate "
                              f"from {base:.1%} to {rate:.1%}")
             promoted.append({"column": p.name, "before": base, "after": rate})
     return promoted

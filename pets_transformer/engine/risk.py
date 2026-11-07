@@ -101,3 +101,50 @@ def l_diversity(released: pd.DataFrame, qis: list[str], sensitive: list[str]) ->
 def marginal_entropy(s: pd.Series) -> float:
     p = s.astype("string").fillna(MISSING).value_counts(normalize=True).to_numpy()
     return float(-(p * np.log2(p)).sum()) if len(p) else 0.0
+
+
+def tolerant_linkage(att_exact: pd.DataFrame, att_val: pd.DataFrame, rel_exact: pd.DataFrame, rel_lo: pd.DataFrame,
+                     rel_hi: pd.DataFrame, windows: dict[str, tuple[float, float]], max_cells: int = 4_000_000) -> dict:
+    """Linkage with approximate background knowledge, as in the kit's attack specs (age ± years, time windows).
+
+    att_exact / rel_exact: exactly matched QIs (attacker values already passed through the public generalisation).
+    att_val: the attacker's approximate values for the tolerant QIs; rel_lo / rel_hi: the interval each released value
+    stands for. A released record is a candidate when every exact QI is equal and, for every tolerant QI c,
+    [v - before, v + after] overlaps [lo, hi]. Success = exactly one candidate and it is the true record.
+    With exact knowledge of the same columns this attacker is never stronger than `linkage_attack` (its candidate set
+    contains the target's whole equivalence class), so it is reported next to it, not instead of it.
+    """
+    n = len(att_exact) if len(att_exact.columns) else len(att_val)
+    if n == 0:
+        return {"success_rate": 0.0, "successes": 0, "targets": 0}
+    exact_cols = list(att_exact.columns)
+    att_key = _keys(att_exact, exact_cols) if exact_cols else pd.Series(0, index=att_val.index)
+    rel_key = _keys(rel_exact, exact_cols) if exact_cols else pd.Series(0, index=rel_lo.index)
+    tol = list(windows)
+    rel_groups = {k: idx for k, idx in rel_key.groupby(rel_key).groups.items()}
+    successes = 0
+    for k, a_idx in att_key.groupby(att_key).groups.items():
+        r_idx = rel_groups.get(k)
+        if r_idx is None:
+            continue
+        r_ids = np.asarray(r_idx)
+        lo = rel_lo.loc[r_idx, tol].to_numpy(float)
+        hi = rel_hi.loc[r_idx, tol].to_numpy(float)
+        a_ids = np.asarray(a_idx)
+        v = att_val.loc[a_idx, tol].to_numpy(float)
+        before = np.array([windows[c][0] for c in tol])
+        after = np.array([windows[c][1] for c in tol])
+        step = max(1, max_cells // max(len(r_ids), 1))
+        for s0 in range(0, len(a_ids), step):
+            vv = v[s0:s0 + step]
+            ok = np.ones((len(vv), len(r_ids)), dtype=bool)
+            for j in range(len(tol)):
+                a_lo, a_hi = vv[:, j] - before[j], vv[:, j] + after[j]
+                # unknown attacker value or unknown released interval: that QI cannot narrow the candidates
+                known = ~np.isnan(a_lo)[:, None] & ~np.isnan(lo[:, j])[None, :]
+                hit = (lo[None, :, j] <= a_hi[:, None]) & (hi[None, :, j] >= a_lo[:, None])
+                ok &= hit | ~known
+            counts = ok.sum(axis=1)
+            first = ok.argmax(axis=1)
+            successes += int(((counts == 1) & (r_ids[first] == a_ids[s0:s0 + step])).sum())
+    return {"success_rate": successes / n, "successes": successes, "targets": int(n)}

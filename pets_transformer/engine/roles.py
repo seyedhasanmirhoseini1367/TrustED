@@ -113,6 +113,7 @@ class Scenario:
     kit_scenario: str | None = None                       # official starter-kit scenario id, e.g. HEALTH-S1
     kit_tasks: list[str] = field(default_factory=list)    # kit utility tasks this release must keep answerable
     sacrificed_tasks: list[str] = field(default_factory=list)
+    pseudonymise: list[str] = field(default_factory=list)  # red columns that must stay linkable (keyed pseudonym)
 
     def __post_init__(self) -> None:
         if self.recipient not in RECIPIENTS:

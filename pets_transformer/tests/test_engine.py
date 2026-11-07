@@ -148,7 +148,8 @@ def test_l_diversity():
 def _toy(n=600, seed=0):
     rng = np.random.default_rng(seed)
     return pd.DataFrame({
-        "name": [f"Person {i}" for i in range(n)],
+        "name": [f"{['Aino', 'Eero', 'Liisa', 'Matti', 'Sanna'][i % 5]} {['Virtanen', 'Korhonen', 'Mäkinen'][i % 3]}{chr(97 + i % 26)}la"
+                 for i in range(n)],
         "date_of_birth": [str(pd.Timestamp("1940-01-01") + pd.Timedelta(days=int(d))) [:10] for d in rng.integers(0, 25000, n)],
         "gender": rng.choice(["F", "M"], n),
         "postcode": rng.choice(["20100", "20200", "20300", "21200", "24100"], n),
@@ -244,10 +245,10 @@ def test_train_test_split_happens_before_transformation(monkeypatch):
 def test_redaction_and_evaluation_regex_only():
     texts = pd.Series(["Patient Aino Virtanen, phone 040 123 4567, email aino@example.fi, HETU 010180-123A."])
     gold = {0: [{"start": 8, "end": 21, "label": "PERSON"}, {"start": 29, "end": 41, "label": "PHONE"},
-                {"start": 49, "end": 64, "label": "EMAIL"}, {"start": 71, "end": 82, "label": "ID"}]}
+                {"start": 49, "end": 64, "label": "EMAIL"}, {"start": 71, "end": 82, "label": "ID"}]}  # ID = legacy alias
     r = Redactor(["Aino Virtanen"], use_presidio=False)
     red, spans = r.redact(texts)
-    assert red[0] == "Patient [PERSON], phone [PHONE], email [EMAIL], HETU [ID]."
+    assert red[0] == "Patient [PERSON], phone [PHONE], email [EMAIL], HETU [NATIONAL_ID]."
     ev = evaluate(gold, spans, texts, red)
     assert ev["recall_any_label"] == 1.0 and ev["leak_rate"] == 0.0
     assert all(v["recall"] == 1.0 for v in ev["per_label"].values())
@@ -332,3 +333,60 @@ def test_kit_scenario_presets():
     assert {"date_of_birth", "sex", "municipality", "arrival_ts"} <= set(sc.attacker_qis)
     assert kit.scenario_from_kit("HEALTH-S1", cols, ["H-U8"]).max_levels == {"arrival_ts": "hour"}
     assert kit.match_table(["a", "b"]) is None
+
+
+def test_finnish_and_spoken_pii_regex_layer():
+    r = Redactor([], use_presidio=False)
+    cases = {
+        "Potilas 54 v, tuotu 29.12. kotoa.": ["[AGE]", "[DATE]"],
+        "hetu on 070889 viiva 965 2 ja numero nolla neljä viisi, neljä kahdeksan kaksi": ["[NATIONAL_ID]", "[PHONE]"],
+        "sähköposti niina piste viitasalo ät nordmail piste example": ["[EMAIL]"],
+        "Auto ZSR-912 seisoi Kangaskaari 14 edessä, kiinteistö 322-534-14-123.": ["[LICENSE_PLATE]", "[ADDRESS]", "[PROPERTY_ID]"],
+        "Kävi https://oma.aallokko.example/reset?token=33f3 sivulla, salasana on Ulla1963!": ["[URL]", "[SECRET]"],
+        "Työnantaja Sinikallio Puu Oy, kaatui Varissuon ostoskeskuksessa.": ["[ORG]", "[LOCATION]"],
+    }
+    out, _ = r.redact(pd.Series(list(cases)))
+    for (text, expected), red in zip(cases.items(), out):
+        for tag in expected:
+            assert tag in red, (text, red)
+    # ordinary clinical shorthand must survive the NER filter
+    from engine.text_pii import plausible_ner
+    assert not plausible_ner("Status: RR", "ORG", False) and not plausible_ner("J18.9", "PERSON", False)
+    assert not plausible_ner("korona", "DATE", False) and plausible_ner("Katja Repo", "PERSON", False)
+
+
+def test_kit_gold_keyed_by_record_id(tmp_path):
+    from engine.text_pii import load_gold
+    p = tmp_path / "spans.jsonl"
+    p.write_text('{"record_id": "N2", "spans": [{"start": 0, "end": 4, "label": "PERSON", "text": "Aino"}]}\n'
+                 '{"record_id": "N9", "spans": []}\n', encoding="utf-8")
+    _, gold = load_gold(p, {"N1": 0, "N2": 1})
+    assert gold == {1: [{"start": 0, "end": 4, "label": "PERSON", "text": "Aino"}]}
+    with pytest.raises(ValueError):
+        load_gold(p)
+
+
+def test_tolerant_linkage_never_beats_exact_attacker():
+    from engine.risk import tolerant_linkage
+    from engine.ladders import BirthDateLadder, TimestampLadder
+    df = _toy(500)
+    df["arrival"] = [str(pd.Timestamp("2025-01-01") + pd.Timedelta(hours=int(h))) for h in np.random.default_rng(3).integers(0, 8000, 500)]
+    bd = BirthDateLadder("date_of_birth", reference="2025-12-31").fit(df["date_of_birth"])
+    ts = TimestampLadder("arrival").fit(df["arrival"])
+    att = df.index[:150]
+    for lb, la in [(0, 0), (2, 1), (4, 3), (5, 4)]:
+        ex = pd.DataFrame({"gender": df["gender"]})
+        lo = pd.DataFrame({"date_of_birth": bd.interval(df["date_of_birth"], lb)[0], "arrival": ts.interval(df["arrival"], la)[0]})
+        hi = pd.DataFrame({"date_of_birth": bd.interval(df["date_of_birth"], lb)[1], "arrival": ts.interval(df["arrival"], la)[1]})
+        val = pd.DataFrame({"date_of_birth": bd.tolerance_value(df["date_of_birth"]), "arrival": ts.tolerance_value(df["arrival"])})
+        tol = tolerant_linkage(ex.loc[att], val.loc[att], ex, lo, hi, {"date_of_birth": (3, 3), "arrival": (96, 24)})
+        gen = pd.DataFrame({"gender": df["gender"], "date_of_birth": bd.apply(df["date_of_birth"], lb),
+                            "arrival": ts.apply(df["arrival"], la)})
+        exact = linkage_attack(gen.loc[att], gen, ["gender", "date_of_birth", "arrival"])
+        assert tol["success_rate"] <= exact["success_rate"] + 1e-12
+    # with zero tolerance and exact intervals the two attacks agree
+    lo = pd.DataFrame({"arrival": ts.interval(df["arrival"], 0)[0]})
+    val = pd.DataFrame({"arrival": ts.tolerance_value(df["arrival"])})
+    t0 = tolerant_linkage(pd.DataFrame(index=att), val.loc[att], pd.DataFrame(index=df.index), lo, lo, {"arrival": (0, 0)})
+    e0 = linkage_attack(pd.DataFrame({"arrival": df["arrival"]}).loc[att], pd.DataFrame({"arrival": df["arrival"]}), ["arrival"])
+    assert t0["success_rate"] == pytest.approx(e0["success_rate"])

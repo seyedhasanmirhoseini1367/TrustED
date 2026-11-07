@@ -154,10 +154,10 @@ def generate(rows: int = 5000, seed: int = 7) -> tuple[pd.DataFrame, dict]:
                 note.add("Seen by Dr. ", (str(rng.choice(DOCTORS)), "PERSON"), " on ",
                          (fmt_date(admission + timedelta(days=int(rng.integers(0, 3))), rng), "DATE"), ".")
             elif e == 2:
-                note.add("Lives alone at ", (f"{rng.choice(STREETS)} {int(rng.integers(1, 80))}", "LOCATION"), ", ",
+                note.add("Lives alone at ", (f"{rng.choice(STREETS)} {int(rng.integers(1, 80))}", "ADDRESS"), ", ",
                          (city, "LOCATION"), ".")
             elif e == 3:
-                note.add("Identity code ", (nid, "ID"), " verified at registration.")
+                note.add("Identity code ", (nid, "NATIONAL_ID"), " verified at registration.")
             elif e == 4:
                 note.add("Follow-up instructions sent to ", (email, "EMAIL"), ".")
             elif e == 5:
@@ -179,7 +179,7 @@ def generate(rows: int = 5000, seed: int = 7) -> tuple[pd.DataFrame, dict]:
         gold.append({"row": i, "spans": note.spans})
     df = pd.DataFrame(records)
     meta = {"text_column": "clinician_notes", "seed": seed, "rows": rows,
-            "labels": ["PERSON", "PHONE", "EMAIL", "DATE", "LOCATION", "ID"], "records": gold}
+            "labels": ["PERSON", "PHONE", "EMAIL", "DATE", "LOCATION", "ADDRESS", "NATIONAL_ID"], "records": gold}
     return df, meta
 
 

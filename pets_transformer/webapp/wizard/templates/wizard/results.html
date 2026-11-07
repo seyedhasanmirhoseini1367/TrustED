@@ -5,7 +5,7 @@
 <h1>Step 4 — Results
   {% if r.target_met %}<span class="status ok">target met</span>{% else %}<span class="status bad">target NOT met</span>{% endif %}</h1>
 <p class="sub"><b>{{ r.scenario.recipient_label }}</b> · purpose: {{ r.scenario.task_type }}{% if r.scenario.target %} of <code>{{ r.scenario.target }}</code>{% endif %}
- · target: attack success ≤ {{ r.scenario.max_linkage|pct:0 }}, k ≥ {{ r.scenario.min_k }} · seed {{ r.scenario.seed }} · {{ r.runtime_seconds }} s</p>
+ · target: re-identification rate ≤ {{ r.scenario.max_linkage|pct:0 }}, k ≥ {{ r.scenario.min_k }} · seed {{ r.scenario.seed }} · {{ r.runtime_seconds }} s</p>
 {% if r.scenario.description %}<div class="card"><b>Sharing scenario.</b> {{ r.scenario.description }}</div>{% endif %}
 
 <div class="kpis">
@@ -28,13 +28,13 @@
 <div class="row">
   <div class="card" style="flex:2">
     <h2>Privacy / utility trade-off</h2>
-    <p class="hint">Every greedy step is a point (x = 1 − attack success, y = utility). The search stops at the first point that meets the
+    <p class="hint">Every greedy step is a point (x = 1 − re-identification rate, y = utility). The search stops at the first point that meets the
       target — the chosen point (★). Hover for the move taken.</p>
     <div class="chartbox"><canvas id="tradeoff"></canvas></div>
   </div>
   <div class="card" style="flex:1">
     <h2>Equivalence-class sizes</h2>
-    <p class="hint">Share of records by class size on the attacker-known columns.</p>
+    <p class="hint">Share of records by class size on the threat model's known attributes.</p>
     <div class="chartbox"><canvas id="kdist"></canvas></div>
   </div>
 </div>
@@ -42,7 +42,7 @@
 <div class="card">
   <h2>Data types identified and PETs selected</h2>
   <div class="tbl"><table>
-    <tr><th>Column</th><th>Role</th><th>Gate</th><th>Attacker knows</th><th>PET applied</th><th>Final level</th><th>Reason</th></tr>
+    <tr><th>Column</th><th>Role</th><th>Gate</th><th>Threat model: known</th><th>PET applied</th><th>Final level</th><th>Reason</th></tr>
     {% for d in r.decisions %}<tr>
       <td class="mono"><b>{{ d.column }}</b></td><td>{{ d.role }}</td><td><span class="gate {{ d.gate }}">{{ d.gate }}</span></td>
       <td>{% if d.attacker_knows %}yes{% else %}<span class="muted">no</span>{% endif %}</td>
@@ -149,8 +149,8 @@
 
 <details class="card"><summary><b>Search path</b> ({{ r.search_path|length }} points)</summary>
   <div class="tbl" style="margin-top:10px"><table>
-    <tr><th>Step</th><th>Move</th><th>Chosen by</th><th>Attack success</th><th>Unique</th><th>min k</th><th>Suppressed</th><th>Utility proxy</th><th>Task retained</th></tr>
-    {% for p in r.search_path %}<tr><td>{{ p.step }}</td><td>{{ p.move }}</td><td>{{ p.chosen_by|default:"—" }}</td><td>{{ p.linkage|pct }}</td>
+    <tr><th>Step</th><th>Move</th><th>Chosen by</th><th>Re-identification rate</th><th>Unique</th><th>min k</th><th>Suppressed</th><th>Utility proxy</th><th>Task retained</th></tr>
+    {% for p in r.search_path %}<tr><td>{{ p.step }}</td><td>{{ p.move }}</td><td>{% if p.chosen_by == "linkage" %}re-identification rate{% else %}{{ p.chosen_by|default:"—" }}{% endif %}</td><td>{{ p.linkage|pct }}</td>
       <td>{{ p.uniqueness|pct }}</td><td>{{ p.min_k }}</td><td>{{ p.suppressed_frac|pct }}</td><td>{{ p.proxy|num:3 }}</td><td>{{ p.task_retained|pct }}</td></tr>{% endfor %}
   </table></div>
 </details>
@@ -173,7 +173,7 @@ new Chart(document.getElementById('tradeoff'), {
     { label: 'Risk target', data: [{x: C.target_x, y: 0}, {x: C.target_x, y: 1.05}], showLine: true, borderDash: [6, 4], borderColor: '#b42318', pointRadius: 0 },
   ]},
   options: { maintainAspectRatio: false, animation: false,
-    scales: { x: { title: { display: true, text: 'privacy = 1 − linkage attack success' }, min: 0, max: 1.02 },
+    scales: { x: { title: { display: true, text: 'privacy = 1 − re-identification rate' }, min: 0, max: 1.02 },
               y: { title: { display: true, text: 'utility' }, suggestedMin: 0.6, max: 1.05 } },
     plugins: { tooltip: { callbacks: { label: c => c.raw.move ? `step ${c.raw.step}: ${c.raw.move} (privacy ${(c.raw.x*100).toFixed(1)} %, utility ${c.raw.y.toFixed(3)})` : 'risk target' } } } }
 });

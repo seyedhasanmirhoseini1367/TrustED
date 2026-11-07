@@ -1,8 +1,8 @@
 # Starter kit summary and gap analysis
 
-Kit: `C:\Users\HP\Desktop\TRUSTED_SinceAI2026_FINAL\TRUSTED_PETS_PROVING_GROUND_2026` (v1.0.0, 4 Nov 2026, 260 files, sha256 per file in `MANIFEST.json`).
-Our tool: `D:\TrustED\pets_transformer` (spec `D:\TrustED\SPEC.md`).
-Measurements below were made on 7 Nov 2026 by running the kit's `pets-eval` 1.0.0 on our engine's output (scratch folder only; no kit or project file changed).
+Kit: `TRUSTED_PETS_PROVING_GROUND_2026` (the official starter kit, v1.0.0, 4 Nov 2026, 260 files, sha256 per file in `MANIFEST.json`); paths below are relative to its root.
+Our tool: `pets_transformer/` (spec `SPEC.md`), both in this repository.
+Measurements below were made on 7 Nov 2026 by running the kit's `pets-eval` 1.0.0 on our engine's output (in a temporary folder; no kit file changed).
 
 ## 1. Purpose and rules
 
@@ -119,8 +119,23 @@ python3 -m pytest -q tests/
 **Status after the 8 Nov changes:** items 1–3 are implemented and item 4 mostly (kit scenarios use every catalogued
 QI as attacker knowledge). Re-measured with `pets-eval scorecard` on `ed_visits` + `lab_results`, HEALTH-S1:
 privacy **1.00**, utility **0.78** (H-U2 1.00, H-U4 0.95, H-U6 0.96, H-U7 0.98, H-U8 sacrificed), composite **0.89**;
-all risk components 0 %. Still open: 5 (Finnish free text), 6 (detection rules; the role mapping and a `labels`
-export exist), 7, 8, 10, 11.
+all risk components 0 %.
+
+**Status after the second round (8 Nov):** items 5, 6, 7 and 8 are implemented; 11 is documented (web UI samples
+50,000 rows; the CLI processes full tables).
+- 5 Free text: Presidio with English + Finnish spaCy models, a Finnish/spoken-number regex layer and the kit's 20 span
+  labels. `pets-eval text`, 3,000 annotated records per table, recall before → after: clinical_notes 89.9 → 99.8 %,
+  turns 78.5 → 98.7 %, service_requests 81.0 → 98.9 %; precision 0.33/0.68/0.66 → 0.95/0.95/0.90; a held-out slice
+  (records 10,000–13,000) gives the same level.
+- 6 Detection: `pets-eval detect` macro-F1 0.63 → **0.862** (B1 0.646), using names, values and table structure only.
+  `pets_submission/unseen_field_labels.csv` regenerated (HETU with/without separator, Finnish numbers and dates,
+  addresses with postcode, hashes, plates).
+- 7 Gold spans keyed by `record_id` are accepted (`--spans file.jsonl --spans-id-col note_id`).
+- 8 The kit's attack specs run with tolerant matching on every kit run and are reported per attack; the exact attacker
+  stays the search objective because it is provably at least as strong on the same columns.
+- HEALTH-S1 re-measured on `ed_visits` + `lab_results` + `clinical_notes`: privacy 1.00, utility 0.78, composite 0.89
+  (no regression); `clinical_notes` free-text leakage 0 %.
+Still open: 10 (DP answers file for H-DP), task requirements for domains other than health and finance.
 
 **Conflicts / what must change (priority order):**
 

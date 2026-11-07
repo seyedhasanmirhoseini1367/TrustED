@@ -31,10 +31,26 @@ TASK_NEEDS: dict[str, dict] = {
              "caps": {"municipality": "merge categories < 1 %", "icd10_primary": "3-character category"}},
     "H-U5": {"desc": "Distributions of vital signs", "caps": {}, "keep": ["systolic_bp", "heart_rate", "temp_c", "spo2"]},
     "H-U6": {"desc": "30-day revisit rate by age band", "caps": {"date_of_birth": "age, 10-year bands"},
-             "keep": ["readmit_30d"]},
+             "keep": ["readmit_30d"], "target": "readmit_30d"},
     "H-U7": {"desc": "CRP vs temperature (needs lab_results released too, joined on the visit pseudonym)",
              "caps": {}, "keep": ["temp_c"], "tables": ["lab_results"]},
     "H-U8": {"desc": "Hour-of-day arrival curve", "conflict": "needs the hour of arrival", "caps": {"arrival_ts": "hour"}},
+    # finance (Saaristo Bank). Card and account numbers stay linkable through keyed pseudonyms where a task needs them.
+    "FIN-U1": {"desc": "Fraud model on protected Jul-Oct, tested on original Nov-Dec (PR-AUC ratio)",
+               "caps": {"ts": "hour", "amount_eur": "2 significant figures"}, "keep": ["mcc", "channel", "merchant_country"],
+               "pseudonymise": ["card_pan", "device_id"], "target": "is_fraud"},
+    "FIN-U2": {"desc": "Spend by MCC group x merchant city x month",
+               "caps": {"ts": "month", "amount_eur": "2 significant figures", "merchant_city": "merge categories < 1 %"},
+               "keep": ["mcc"]},
+    "FIN-U3": {"desc": "Payday effect: spend by day of month", "caps": {"ts": "day", "amount_eur": "2 significant figures"}},
+    "FIN-U4": {"desc": "Card spending-profile segmentation (k=6) agreement",
+               "caps": {"amount_eur": "2 significant figures"}, "keep": ["mcc", "channel"], "pseudonymise": ["card_pan"]},
+    "FIN-U5": {"desc": "AML rule hits on transfers (structuring, rapid pass-through)",
+               "caps": {"booking_ts": "hour", "amount_eur": "2 significant figures"},
+               "pseudonymise": ["from_iban", "to_iban"], "tables": ["transfers"]},
+    "FIN-U6": {"desc": "Mean monthly card spend by income band x age band",
+               "caps": {"birth_date": "age, 10-year bands"}, "keep": ["income_band"],
+               "pseudonymise": ["card_pan", "customer_id"], "tables": ["customers", "cards"]},
 }
 
 ROLE_TO_KIT = {"DIRECT_ID": "direct_identifier", "QUASI_ID": "quasi_identifier", "DATE": "quasi_identifier",
@@ -107,13 +123,17 @@ def scenario_from_kit(sid: str, columns: list[str], tasks: list[str] | None = No
     chosen = [t["id"] for t in s["tasks"] if (t["id"] in tasks if tasks is not None else t["default"])]
     caps: dict[str, str] = {}
     keep: list[str] = []
+    pseudo: list[str] = []
+    target = None
     for t in chosen:
         need = TASK_NEEDS.get(t, {})
         for col, lvl in need.get("caps", {}).items():
             if col in columns:
                 caps.setdefault(col, lvl)  # first requirement wins; tasks here never disagree on a column's cap
         keep += [c for c in need.get("keep", []) if c in columns]
-    target = "readmit_30d" if "readmit_30d" in columns and s["dataset"] == "health" else None
+        pseudo += [c for c in need.get("pseudonymise", []) if c in columns]
+        if target is None and need.get("target") in columns:   # the first task with a model target defines it
+            target = need["target"]
     return Scenario(
         recipient=TRUST_TO_RECIPIENT.get(s["trust_level"], "partner"),
         attacker_qis=table_qis(s["dataset"], s["table"], columns),
@@ -121,12 +141,14 @@ def scenario_from_kit(sid: str, columns: list[str], tasks: list[str] | None = No
         key_columns=sorted(set(keep) - {target}),
         description=(f"{s['id']} — {s['title']}. Recipient: {s['recipient']}. Purpose: {s['purpose']}. "
                      f"Threat model: {s['threat_model']} Suggested targets: {s['suggested_privacy_targets']}"),
-        seed=seed, max_levels=caps, kit_scenario=sid, kit_tasks=chosen,
+        seed=seed, max_levels=caps, kit_scenario=sid, kit_tasks=chosen, pseudonymise=sorted(set(pseudo)),
         sacrificed_tasks=[t["id"] for t in s["tasks"] if t["id"] not in chosen],
     )
 
 
 def kit_role(p: ColumnProfile) -> str:
+    if p.subtype == "url":      # URLs carry tokens, e-mails and paths: the kit treats them as free text
+        return "free_text"
     if p.role == Role.TECHNICAL_ID:
         return "record_key" if p.subtype == "record_key" and p.unique_ratio > 0.99 else "technical_identifier"
     return ROLE_TO_KIT[p.role.value]
@@ -137,3 +159,12 @@ def field_labels(profiles: list[ColumnProfile], dataset: str, table: str) -> pd.
     the organisers' unseen-dataset scoring)."""
     return pd.DataFrame([{"dataset": dataset, "table": table, "column": p.name, "privacy_role": kit_role(p),
                           "subtype": SUBTYPE_TO_KIT.get(p.subtype or "", "OTHER")} for p in profiles])
+
+
+@lru_cache(maxsize=1)
+def attack_specs() -> dict:
+    return json.loads((DATA / "attack_specs.json").read_text(encoding="utf-8"))
+
+
+def attacks_for(dataset: str, table: str) -> list[dict]:
+    return [a for a in attack_specs().get("attacks", []) if a["dataset"] == dataset and a["table"] == table]

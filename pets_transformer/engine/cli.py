@@ -18,7 +18,7 @@ from pathlib import Path
 
 from . import kit
 from .dp import dp_query, error_curve
-from .pipeline import load_table, run
+from .pipeline import load_table, person_names, place_names, run
 from .profiling import detect_domain, profile_dataframe
 from .report import render_html, to_json
 from .roles import ColumnProfile, Scenario
@@ -47,17 +47,34 @@ def cmd_run(a) -> int:
     sc = Scenario.from_dict(json.loads(Path(a.scenario).read_text(encoding="utf-8"))) if a.scenario else Scenario()
     secret, _ = get_secret()  # one secret for every table -> same value, same token across tables
     out_root = Path(a.out)
-    gold, gold_col = None, None
-    if a.spans:
-        gold_col, gold = load_gold(json.loads(Path(a.spans).read_text(encoding="utf-8")))
+    gold_src = a.spans
     profiles = None
     if a.profile:
         profiles = [ColumnProfile.from_dict(d) for d in json.loads(Path(a.profile).read_text(encoding="utf-8"))]
     out_root.mkdir(parents=True, exist_ok=True)
     tasks = a.kit_tasks.split(",") if a.kit_tasks else None
+    # names and places from every table in the run: the free-text recognizer of one table knows the people and
+    # places of the others (e.g. chat turns + customers table)
+    names, places = [], []
+    if len(a.data) > 1:
+        for path in a.data:
+            t = load_table(path)
+            prof = profile_dataframe(t)
+            names += person_names(t, prof)
+            places += place_names(t, prof)
     for path in a.data:
         df = load_table(path)
         name = Path(path).stem
+        gold, gold_col = None, None
+        if gold_src and len(a.data) == 1:
+            if str(gold_src).endswith(".jsonl"):   # the kit's format, keyed by record id
+                if not a.spans_id_col:
+                    raise SystemExit("--spans-id-col is required for .jsonl ground truth (e.g. note_id)")
+                id_to_row = {str(v): i for i, v in enumerate(df[a.spans_id_col])}
+                gold_col, gold = load_gold(gold_src, id_to_row)
+                gold_col = a.spans_text_col
+            else:
+                gold_col, gold = load_gold(json.loads(Path(gold_src).read_text(encoding="utf-8")))
         if a.kit_scenario:
             table_sc = kit.scenario_from_kit(a.kit_scenario, list(df.columns), tasks, seed=sc.seed)
         else:
@@ -66,8 +83,9 @@ def cmd_run(a) -> int:
                                            "key_columns": [c for c in sc.key_columns if c in df.columns]})
         if table_sc.target is None and table_sc.task_type in ("classification", "regression"):
             table_sc.task_type = "descriptive"
-        res = run(df, table_sc, profiles=profiles if len(a.data) == 1 else None, gold=gold if len(a.data) == 1 else None,
-                  gold_column=gold_col, secret=secret, use_presidio=not a.no_presidio, progress=lambda m: _print(f"  .. {m}"))
+        res = run(df, table_sc, profiles=profiles if len(a.data) == 1 else None, gold=gold,
+                  gold_column=gold_col, secret=secret, use_presidio=not a.no_presidio, progress=lambda m: _print(f"  .. {m}"),
+                  extra_names=names, extra_places=places)
         # kit conventions: same table file name, original column names, rowmap_<table>.csv (never publish the row map)
         res.export_table().to_csv(out_root / f"{name}.csv", index=False)
         res.rowmap.to_csv(out_root / f"rowmap_{name}.csv", index=False)
@@ -77,7 +95,7 @@ def cmd_run(a) -> int:
         (rep_dir / f"{name}.report.html").write_text(render_html(res.report), encoding="utf-8")
         r = res.report
         b, af = r["metrics"]["before"], r["metrics"]["after"]
-        _print(f"{name}: attack success {b['linkage']:.1%} → {af['linkage']:.1%}; min k {b['min_k']} → {af['min_k']}; "
+        _print(f"{name}: re-identification rate {b['linkage']:.1%} → {af['linkage']:.1%}; min k {b['min_k']} → {af['min_k']}; "
                f"utility {r['utility']['score']:.3f}; target {'met' if r['target_met'] else 'NOT met'}; {r['runtime_seconds']} s")
         _print(f"  wrote {out_root / (name + '.csv')} + rowmap_{name}.csv + reports/{name}.report.*")
     if a.kit_scenario:
@@ -144,7 +162,9 @@ def main(argv=None) -> int:
     p.add_argument("data", nargs="+")
     p.add_argument("--scenario", help="scenario JSON (see examples/scenario_partner.json)")
     p.add_argument("--out", default="out")
-    p.add_argument("--spans", help="ground-truth free-text spans JSON")
+    p.add_argument("--spans", help="ground-truth free-text spans: our JSON, or the kit's JSONL keyed by record_id")
+    p.add_argument("--spans-id-col", help="record id column for kit JSONL spans (e.g. note_id)")
+    p.add_argument("--spans-text-col", help="text column the kit JSONL spans refer to")
     p.add_argument("--profile", help="profile JSON with role/gate overrides")
     p.add_argument("--no-presidio", action="store_true", help="regex-only text redaction")
     p.add_argument("--kit-scenario", help="official starter-kit scenario id, e.g. HEALTH-S1")

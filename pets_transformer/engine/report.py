@@ -44,11 +44,11 @@ def kpis(report: dict) -> list[dict]:
     m = report["metrics"]
     b, a = m["before"], m["after"]
     out = [
-        {"label": "Linkage attack success", "before": pct(b["linkage"]), "after": pct(a["linkage"]),
+        {"label": "Re-identification rate", "before": pct(b["linkage"]), "after": pct(a["linkage"]),
          "good": a["linkage"] <= report["scenario"]["max_linkage"],
          "note": f"target ≤ {pct(report['scenario']['max_linkage'], 0)}"},
         {"label": "Unique records", "before": pct(b["uniqueness"]), "after": pct(a["uniqueness"]), "good": a["uniqueness"] < b["uniqueness"] or a["uniqueness"] == 0,
-         "note": "on attacker-known QIs"},
+         "note": "on the threat model's known attributes"},
         {"label": "Minimum k", "before": str(b["min_k"]), "after": str(a["min_k"]), "good": a["min_k"] >= report["scenario"]["min_k"],
          "note": f"target ≥ {report['scenario']['min_k']}"},
     ]
@@ -136,7 +136,7 @@ li.sev-high{{color:#912018}} pre{{background:#f6f8fa;padding:8px;font-size:12px;
 <section><h2>3. Data types identified and PETs selected</h2>
 <table><tr><th>Column</th><th>Role</th><th>Gate</th><th>PET</th><th>Final level</th><th>Reason</th></tr>{rows_d}</table></section>
 <section><h2>4. Search path (privacy / utility trade-off)</h2>
-<table><tr><th>Step</th><th>Move</th><th>Attack success</th><th>Unique</th><th>min k</th><th>Suppressed</th><th>Utility proxy</th><th>Task metric retained</th></tr>{rows_p}</table></section>
+<table><tr><th>Step</th><th>Move</th><th>Re-identification rate</th><th>Unique</th><th>min k</th><th>Suppressed</th><th>Utility proxy</th><th>Task metric retained</th></tr>{rows_p}</table></section>
 <section><h2>5. Utility</h2>{task_html}
 <p>Descriptive utility {num(d['score'], 3)}: {d['n_queries']} aggregate queries (counts/means by {_e(', '.join(d['group_columns']))}) with mean relative
 error {pct(d['query_mean_rel_error'], 2)}; distribution score {num(d['distribution_score'], 3)} (TVD / Wasserstein per column).</p></section>

@@ -20,6 +20,15 @@ from .profiling import parse_dates, to_number
 NA = pd.NA
 
 
+def _mask(m) -> np.ndarray:
+    """Plain numpy bool mask (NA -> False). Boolean-Series indexing with list assignment differs across pandas/numpy
+    versions; .loc with a numpy mask behaves the same everywhere."""
+    if isinstance(m, pd.Series):
+        m = m.fillna(False) if m.dtype == object or str(m.dtype) == "boolean" else m
+        return m.to_numpy(dtype=bool)
+    return np.asarray(m, dtype=bool)
+
+
 def _entropy(s: pd.Series) -> float:
     p = s.astype("string").fillna("<NA>").value_counts(normalize=True).to_numpy()
     return float(-(p * np.log(p)).sum()) if len(p) else 0.0
@@ -49,6 +58,16 @@ class Ladder:
 
     def numeric(self, s: pd.Series, level: int) -> pd.Series | None:
         """Numeric representation of the column at a given level (bin centres, date midpoints)."""
+        return None
+
+    # Tolerant matching (risk.tolerant_linkage): an attacker's approximate value is compared with the interval a
+    # released value stands for. Ladders that do not support it return None.
+    def tolerance_value(self, s: pd.Series) -> pd.Series | None:
+        """The attacker's exact value on the tolerance scale (hours for times, years for ages)."""
+        return None
+
+    def interval(self, s: pd.Series, level: int) -> tuple[pd.Series, pd.Series] | None:
+        """[lo, hi] on the tolerance scale that each released value (original value at `level`) stands for."""
         return None
 
     def describe(self, level: int) -> str:
@@ -97,7 +116,7 @@ class DateLadder(Ladder):
         d = parse_dates(s)
         step = self._steps[min(level, self.max_level)]
         out = pd.Series(pd.NA, index=s.index, dtype="string")
-        ok = d.notna()
+        ok = _mask(d.notna())
         if not ok.any():
             return out
         dd = d[ok]
@@ -118,7 +137,7 @@ class DateLadder(Ladder):
             width = 5 if step == "5Y" else 10
             lo = (dd.dt.year // width) * width
             lab = lo.astype(str) + "-" + (lo + width - 1).astype(str)
-        out[ok] = lab.astype("string")
+        out.loc[_mask(ok)] = lab.astype("string").to_numpy()
         return out
 
     def numeric(self, s: pd.Series, level: int) -> pd.Series:
@@ -131,9 +150,28 @@ class DateLadder(Ladder):
         mids = {lab: self._midpoint(lab, self._steps[min(level, self.max_level)]) for lab in uniq}
         return labels.map(mids).astype(float)
 
+    def tolerance_value(self, s: pd.Series) -> pd.Series:
+        return (parse_dates(s) - pd.Timestamp("1970-01-01")).dt.total_seconds() / 3600.0
+
+    def interval(self, s: pd.Series, level: int) -> tuple[pd.Series, pd.Series]:
+        if level <= 0:
+            v = self.tolerance_value(s)
+            return v, v
+        step = self._steps[min(level, self.max_level)]
+        labels = self.apply(s, level)
+        bounds = {lab: self._period(lab, step) for lab in labels.dropna().unique()}
+        epoch = pd.Timestamp("1970-01-01")
+        lo = labels.map({k: (a - epoch).total_seconds() / 3600.0 for k, (a, b) in bounds.items()}).astype(float)
+        hi = labels.map({k: (b - epoch).total_seconds() / 3600.0 for k, (a, b) in bounds.items()}).astype(float)
+        return lo, hi
+
     @staticmethod
     def _midpoint(label: str, step: str) -> float:
-        epoch = pd.Timestamp("1970-01-01")
+        start, end = DateLadder._period(label, step)
+        return ((start - pd.Timestamp("1970-01-01")) + (end - start) / 2).total_seconds() / 86400.0
+
+    @staticmethod
+    def _period(label: str, step: str) -> tuple[pd.Timestamp, pd.Timestamp]:
         if step in ("h",):
             start = pd.Timestamp(label)
             end = start + pd.Timedelta(hours=1)
@@ -157,7 +195,7 @@ class DateLadder(Ladder):
             lo, hi = label.split("-")
             start = pd.Timestamp(f"{lo}-01-01")
             end = pd.Timestamp(f"{int(hi) + 1}-01-01")
-        return ((start - epoch) + (end - start) / 2).total_seconds() / 86400.0
+        return start, end
 
 
 class TimestampLadder(DateLadder):
@@ -191,6 +229,22 @@ class BirthDateLadder(Ladder):
     def _age(self, s: pd.Series) -> pd.Series:
         return ((self.ref - parse_dates(s)).dt.days / 365.25).clip(lower=0)
 
+    def tolerance_value(self, s: pd.Series) -> pd.Series:
+        return self._age(s)
+
+    def interval(self, s: pd.Series, level: int) -> tuple[pd.Series, pd.Series]:
+        level = min(level, self.max_level)
+        if level <= 0:
+            a = self._age(s)
+            return a, a
+        if level <= 2:  # month / year of birth -> range of possible ages
+            d = parse_dates(s)
+            per = d.dt.to_period("M" if level == 1 else "Y")
+            start, end = per.dt.start_time, per.dt.end_time
+            return ((self.ref - end).dt.days / 365.25).clip(lower=0), ((self.ref - start).dt.days / 365.25).clip(lower=0)
+        lo, hi = self._band(self._age(s), level)
+        return lo.astype(float), (hi.fillna(lo + 29) + 1).astype(float)
+
     def _band(self, age: pd.Series, level: int) -> tuple[pd.Series, pd.Series]:
         width = {3: 5, 4: 10, 5: 10, 6: 20}[min(level, self.max_level)]
         lo = np.floor(age / width) * width
@@ -210,8 +264,8 @@ class BirthDateLadder(Ladder):
             return parse_dates(s).dt.year.astype("Int64").astype("string")
         lo, hi = self._band(self._age(s), level)
         lab = pd.Series(pd.NA, index=s.index, dtype="string")
-        ok = lo.notna()
-        lab[ok] = [f"{int(a)}+" if pd.isna(b) else f"{int(a)}-{int(b)}" for a, b in zip(lo[ok], hi[ok])]
+        ok = _mask(lo.notna())
+        lab.loc[ok] = [f"{int(a)}+" if pd.isna(b) else f"{int(a)}-{int(b)}" for a, b in zip(lo[ok], hi[ok])]
         return lab
 
     def numeric(self, s: pd.Series, level: int) -> pd.Series:
@@ -277,12 +331,29 @@ class AgeLadder(Ladder):
         lo, w = self._bin(v, level)
         step = self.unit if self.integer else 0
         lab = pd.Series(pd.NA, index=s.index, dtype="string")
-        ok = v.notna()
-        lab[ok] = [f"{_fmt(a)}-{_fmt(a + w - step)}" if self.integer else f"[{_fmt(a)}, {_fmt(a + w)})" for a in lo[ok]]
+        ok = _mask(v.notna())
+        lab.loc[ok] = [f"{_fmt(a)}-{_fmt(a + w - step)}" if self.integer else f"[{_fmt(a)}, {_fmt(a + w)})"
+                       for a in lo[ok]]
         if level >= 4:
-            lab[ok & (v < self.bottom)] = f"<{_fmt(self.bottom)}"
-            lab[ok & (v >= self.top)] = f"{_fmt(self.top)}+"
+            lab.loc[ok & _mask(v < self.bottom)] = f"<{_fmt(self.bottom)}"
+            lab.loc[ok & _mask(v >= self.top)] = f"{_fmt(self.top)}+"
         return lab
+
+    def tolerance_value(self, s: pd.Series) -> pd.Series:
+        return to_number(s)
+
+    def interval(self, s: pd.Series, level: int) -> tuple[pd.Series, pd.Series]:
+        v = to_number(s)
+        if level <= 0:
+            return v, v
+        lo, w = self._bin(v, level)
+        hi = lo + w
+        if level >= 4:
+            lo = lo.mask(v < self.bottom, -np.inf)
+            hi = hi.mask(v < self.bottom, self.bottom)
+            lo = lo.mask(v >= self.top, self.top)
+            hi = hi.mask(v >= self.top, np.inf)
+        return lo.astype(float), hi.astype(float)
 
     def numeric(self, s: pd.Series, level: int) -> pd.Series:
         v = to_number(s)
@@ -335,7 +406,7 @@ class NumericLadder(Ladder):
         idx = self._idx(v, min(level, 3))
         labels = [f"[{_fmt(edges[i])}, {_fmt(edges[i + 1])}{']' if i == len(edges) - 2 else ')'}" for i in range(len(edges) - 1)]
         out = pd.Series([labels[i] for i in idx], index=s.index, dtype="string")
-        out[v.isna()] = pd.NA
+        out.loc[_mask(v.isna())] = pd.NA
         return out
 
     def numeric(self, s: pd.Series, level: int) -> pd.Series:
@@ -347,7 +418,7 @@ class NumericLadder(Ladder):
         lvl = min(level, 3)
         idx = self._idx(v, lvl)
         out = pd.Series([self.centres[lvl][i] for i in idx], index=s.index, dtype=float)
-        out[v.isna()] = np.nan
+        out.loc[_mask(v.isna())] = np.nan
         return out
 
 

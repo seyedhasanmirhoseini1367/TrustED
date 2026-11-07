@@ -100,7 +100,8 @@ def place_names(df: pd.DataFrame, profiles: list[ColumnProfile]) -> list[str]:
 
 def run(df: pd.DataFrame, scenario: Scenario, profiles: list[ColumnProfile] | None = None, gold: dict | None = None,
         gold_column: str | None = None, secret: bytes | None = None, use_presidio: bool = True,
-        progress: Callable[[str], None] | None = None) -> RunResult:
+        progress: Callable[[str], None] | None = None,
+        extra_names: list[str] | None = None, extra_places: list[str] | None = None) -> RunResult:
     t0 = time.time()
     say = progress or (lambda m: None)
     df = df.reset_index(drop=True)
@@ -115,6 +116,10 @@ def run(df: pd.DataFrame, scenario: Scenario, profiles: list[ColumnProfile] | No
 
     say("assigning gates")
     assign_gates(profiles, df, scenario)
+    for p in profiles:   # a task needs this identifier linkable: keyed pseudonym instead of dropping it
+        if p.name in (scenario.pseudonymise or []) and p.gate == Gate.RED:
+            p.red_action = RedAction.PSEUDONYMISE
+            p.gate_reason = "keyed HMAC pseudonym: a utility task of the scenario needs records of the same person/card linked"
     by_name = {p.name: p for p in profiles}
 
     known_declared = attacker_known(profiles, scenario)
@@ -127,7 +132,7 @@ def run(df: pd.DataFrame, scenario: Scenario, profiles: list[ColumnProfile] | No
     for p in profiles:
         if p.name in known and p.gate == Gate.GREEN and p.ladder is not None and p.role != Role.TARGET:
             p.gate = Gate.YELLOW
-            p.gate_reason = "the modelled attacker knows this column, so it is treated as a quasi-identifier"
+            p.gate_reason = "a known attribute in the threat model, so it is treated as a quasi-identifier"
     groups = column_groups(profiles)
 
     say("fitting ladders")
@@ -140,7 +145,10 @@ def run(df: pd.DataFrame, scenario: Scenario, profiles: list[ColumnProfile] | No
     text_examples: list[dict] = []
     text_cols = [p.name for p in profiles if p.role == Role.FREE_TEXT and p.gate != Gate.RED]
     if text_cols:
-        redactor = Redactor(person_names(df, profiles), use_presidio=use_presidio, places=place_names(df, profiles))
+        # health mentions are the content of health data, not identifiers in it: keep them there
+        skip = {"HEALTH"} if domain == "healthcare" else set()
+        redactor = Redactor(person_names(df, profiles) + list(extra_names or []), use_presidio=use_presidio,
+                            places=place_names(df, profiles) + list(extra_places or []), skip_labels=skip)
         for col in text_cols:
             t1 = time.time()
             red, spans = redactor.redact(df[col])
@@ -178,7 +186,8 @@ def run(df: pd.DataFrame, scenario: Scenario, profiles: list[ColumnProfile] | No
 
     # ---------------------------------------------------------------- metrics
     say("measuring utility")
-    sensitive = [p.name for p in profiles if p.role == Role.SENSITIVE and p.name in protected.columns]
+    # attribute disclosure concerns sensitive values the attacker does not already know
+    sensitive = [p.name for p in profiles if p.role == Role.SENSITIVE and p.name in protected.columns and p.name not in known]
     orig_view = pd.DataFrame({c: df[c] for c in known}, index=df.index)
     prot_known = pd.DataFrame({c: (ladders[c].apply(df[c], res.levels.get(c, 0)) if c in ladders else df[c])
                                for c in known}, index=df.index).loc[protected.index]
@@ -233,7 +242,7 @@ def run(df: pd.DataFrame, scenario: Scenario, profiles: list[ColumnProfile] | No
                 c = contrib_by_col.get(p.name)
                 if c and c["steps"]:
                     grp = f" (moved together with {', '.join(x for x in c['columns'] if x != p.name)})" if len(c["columns"]) > 1 else ""
-                    row["reason"] = (f"reduced attack success by {c['risk_pp']:.1f} pp at {c['utility_cost']:.3f} utility "
+                    row["reason"] = (f"reduced the re-identification rate by {c['risk_pp']:.1f} pp at {c['utility_cost']:.3f} utility "
                                      f"cost over {c['steps']} step(s){grp}")
                     if all(m in ("uniqueness", "prosecutor_risk", "entropy", "below_k") for m in c["metrics"]):
                         row["reason"] += f"; chosen to reduce {', '.join(sorted(set(c['metrics'])))} first"
@@ -242,7 +251,7 @@ def run(df: pd.DataFrame, scenario: Scenario, profiles: list[ColumnProfile] | No
             elif p.min_level > 0:
                 row["reason"] = p.gate_reason
             else:
-                row["reason"] = "not in the modelled attacker's knowledge: left at its floor level (see residual risks)"
+                row["reason"] = "not a known attribute in the threat model: left at its floor level (see residual risks)"
             row["level_index"] = lvl
             if p.name in caps:
                 row["reason"] += f"; utility requirement: at most '{lad.level_names[caps[p.name]]}'"
@@ -256,8 +265,8 @@ def run(df: pd.DataFrame, scenario: Scenario, profiles: list[ColumnProfile] | No
         sc = res.contributions.get("suppression", {})
         decisions.append({"column": "(records)", "role": "—", "kind": "—", "gate": "yellow", "attacker_knows": True,
                           "pet": "Record suppression", "level": f"{n} rows ({n / len(df):.1%})",
-                          "reason": (f"records in equivalence classes with k < {scenario.min_k} removed; reduced attack "
-                                     f"success by {sc.get('risk_pp', 0):.1f} pp at {sc.get('utility_cost', 0):.3f} utility cost")})
+                          "reason": (f"records in equivalence classes with k < {scenario.min_k} removed; reduced the "
+                                     f"re-identification rate by {sc.get('risk_pp', 0):.1f} pp at {sc.get('utility_cost', 0):.3f} utility cost")})
 
     after = res.final
     metrics = {
@@ -301,6 +310,12 @@ def run(df: pd.DataFrame, scenario: Scenario, profiles: list[ColumnProfile] | No
                    "suppression_cap": scenario.suppression_cap, "presidio": use_presidio},
         "runtime_seconds": None,
     }
+    if scenario.kit_scenario:
+        from .kit import match_table
+        m = match_table(list(df.columns))
+        if m is not None:
+            say("running the kit's re-identification tests (attack_specs.json, tolerant matching)")
+            report["kit_attacks"] = kit_attacks(df, protected.index, profiles, ladders, res.levels, searcher.att_ids, *m)
     report["residual_risks"] = residual_risks(report, profiles, known, res)
     report["runtime_seconds"] = round(time.time() - t0, 1)
     preview = build_preview(df, protected, profiles)
@@ -330,11 +345,12 @@ def _risk_summary(m: dict, km: dict) -> dict:
 
 
 def _threat_statement(sc: Scenario, known: list[str], derived: list[dict]) -> str:
-    s = (f"Recipient: {sc.recipient_label}. The attacker holds the exact values of {', '.join(known) or 'no columns'} for "
-         f"a random {sc.attacker_fraction:.0%} of the people in the dataset (e.g. from a public directory or social media) and "
-         f"knows the release transformations, so they apply the same generalisation to their own data before matching. "
+    s = (f"Recipient: {sc.recipient_label}. Threat model: someone may already know the exact values of "
+         f"{', '.join(known) or 'no columns'} for a random {sc.attacker_fraction:.0%} of the people in the dataset "
+         f"(e.g. from a public directory or social media), and may know the release transformations, so the same "
+         f"generalisation is applied to that knowledge before matching. "
          f"A person is re-identified when exactly one released record matches and it is theirs. "
-         f"Target: attack success ≤ {sc.max_linkage:.0%} and every equivalence class ≥ {sc.min_k} records.")
+         f"Target: re-identification rate ≤ {sc.max_linkage:.0%} and every equivalence class ≥ {sc.min_k} records.")
     if derived:
         s += " Derived knowledge: " + "; ".join(f"{d['column']} follows from {d['from']}" for d in derived) + "."
     return s
@@ -345,12 +361,12 @@ def residual_risks(report: dict, profiles: list[ColumnProfile], known: list[str]
     out = []
     if not res.target_met:
         a = report["metrics"]["after"]
-        out.append({"severity": "high", "text": (f"Target NOT met: attack success {a['linkage']:.1%} (target ≤ {sc['max_linkage']:.0%}), "
+        out.append({"severity": "high", "text": (f"Target NOT met: re-identification rate {a['linkage']:.1%} (target ≤ {sc['max_linkage']:.0%}), "
                                                  f"min k {a['min_k']} (target ≥ {sc['min_k']}). No remaining move reached it; "
                                                  "consider aggregation or DP instead of row-level release.")})
-    out.append({"severity": "medium", "text": "Risk is measured only against the modelled attacker; stronger background "
+    out.append({"severity": "medium", "text": "Risk is measured only against the modelled threat model; more background "
                                               "knowledge (more columns, more people) can raise it."})
-    out.append({"severity": "medium", "text": "k-anonymity and linkage metrics are empirical, not a formal guarantee (unlike "
+    out.append({"severity": "medium", "text": "k-anonymity and re-identification rates are empirical, not a formal guarantee (unlike "
                                               "differential privacy)."})
     out.append({"severity": "low", "text": "Greedy search is not globally optimal; another combination of levels may keep more "
                                            "utility at the same risk."})
@@ -376,11 +392,15 @@ def residual_risks(report: dict, profiles: list[ColumnProfile], known: list[str]
     unknown_qi = [p.name for p in profiles if p.gate == Gate.YELLOW and p.role in (Role.QUASI_ID, Role.DATE, Role.LOCATION)
                   and p.name not in known and report["plan"]["levels"].get(p.name, 0) == 0]
     if unknown_qi:
-        out.append({"severity": "medium", "text": ("Quasi-identifiers released exactly because the modelled attacker is not "
-                                                   f"assumed to know them: {', '.join(unknown_qi)}.")})
+        out.append({"severity": "medium", "text": ("Quasi-identifiers released exactly because the threat model does not list them "
+                                                   f"as known attributes: {', '.join(unknown_qi)}.")})
     green_hi = [p.name for p in profiles if p.gate == Gate.GREEN and p.role in (Role.OTHER,) and p.unique_ratio > 0.5]
     if green_hi:
         out.append({"severity": "medium", "text": f"High-cardinality columns released unchanged; review manually: {', '.join(green_hi)}."})
+    for a in report.get("kit_attacks") or []:
+        if a["after"] > sc["max_linkage"]:
+            out.append({"severity": "high", "text": (f"Kit re-identification test '{a['adversary']}' (attack_specs.json, tolerant matching on {', '.join(a['qis'])}) "
+                                                     f"still re-identifies {a['after']:.1%} of targets.")})
     if "local key file" in report["config"]["secret_source"]:
         out.append({"severity": "low", "text": "Pseudonymisation secret comes from a local key file; set PETS_SECRET from a "
                                                "secrets manager in production."})
@@ -405,3 +425,44 @@ def build_preview(df: pd.DataFrame, protected: pd.DataFrame, profiles: list[Colu
 
 def _cell(v) -> str:
     return "" if v is None or (not isinstance(v, str) and pd.isna(v)) else str(v)
+
+
+def kit_attacks(df: pd.DataFrame, released_index: pd.Index, profiles: list[ColumnProfile], ladders: dict[str, Ladder],
+                levels: dict[str, int], att_ids, dataset: str, table: str) -> list[dict]:
+    """The kit's background-knowledge attacks for this table (metadata/attack_specs.json), run with tolerant matching
+    (time windows, age ± years) against the release. Attackers get the exact original values of the targets, i.e. at
+    least the knowledge the kit's attacker files contain. QIs whose column is not released are skipped, as in the kit."""
+    from .kit import attacks_for
+    from .risk import tolerant_linkage
+    by = {p.name: p for p in profiles}
+    out = []
+    for spec in attacks_for(dataset, table):
+        exact, windows, used = [], {}, []
+        for q in spec["qis"]:
+            col = next((c for c in q["protected"] if c in df.columns and by.get(c) and by[c].gate != Gate.RED), None)
+            if col is None or q["kind"] == "geo":
+                continue
+            lad = ladders.get(col)
+            if q["kind"] in ("time", "age") and lad is not None and lad.tolerance_value(df[col]) is not None:
+                windows[col] = (float(q["window"][0]), float(q["window"][1])) if q["kind"] == "time" else \
+                    (float(q.get("tol", 0)), float(q.get("tol", 0)))
+            else:
+                exact.append(col)
+            used.append(f"{col} ({q['kind']})")
+        if not used:
+            continue
+        res = {}
+        for name, lv, idx in (("before", {c: 0 for c in levels}, df.index), ("after", levels, released_index)):
+            def gen(c):
+                lad = ladders.get(c)
+                return lad.apply(df[c], lv.get(c, 0)) if lad is not None else df[c]
+            ex = pd.DataFrame({c: gen(c) for c in exact}, index=df.index)
+            lo = pd.DataFrame({c: ladders[c].interval(df[c], lv.get(c, 0))[0] for c in windows}, index=df.index)
+            hi = pd.DataFrame({c: ladders[c].interval(df[c], lv.get(c, 0))[1] for c in windows}, index=df.index)
+            val = pd.DataFrame({c: ladders[c].tolerance_value(df[c]) for c in windows}, index=df.index)
+            r = tolerant_linkage(ex.loc[att_ids], val.loc[att_ids], ex.loc[idx], lo.loc[idx], hi.loc[idx], windows)
+            res[name] = r["success_rate"]
+        out.append({"adversary": spec["adversary"], "description": spec.get("description", ""), "qis": used,
+                    "tolerances": {c: list(w) for c, w in windows.items()}, "before": res["before"], "after": res["after"],
+                    "targets": int(len(att_ids))})
+    return out

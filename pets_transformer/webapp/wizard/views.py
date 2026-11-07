@@ -204,7 +204,7 @@ def _default_scenario(job: Job) -> dict:
     if job.has_gold and job.name.startswith("Sample"):
         qis = [c for c in ("date_of_birth", "gender", "postcode", "admission_date") if c in qis] or qis
         desc = ("A hospital shares admissions data with an external research partner to build a 30-day readmission "
-                "model. The attacker is assumed to know age/DOB, gender, postcode and admission date.")
+                "model. Threat model: age/DOB, gender, postcode and admission date may already be known.")
     return {"recipient": "partner", "attacker_qis": qis, "task_type": "classification" if target else "descriptive",
             "target": target, "key_columns": [], "max_linkage": None, "min_k": None, "description": desc, "seed": 42}
 

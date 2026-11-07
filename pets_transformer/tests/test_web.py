@@ -47,7 +47,7 @@ def test_full_wizard_flow(client):
     assert b"gate green" in r.content
 
     r = client.get(f"/job/{job.id}/scenario/")
-    assert r.status_code == 200 and b"Attacker knowledge" in r.content
+    assert r.status_code == 200 and b"Threat model: known attributes" in r.content
 
     r = client.post(f"/job/{job.id}/scenario/", {
         "recipient": "partner", "attacker_qis": ["date_of_birth", "gender", "postcode", "admission_date"],

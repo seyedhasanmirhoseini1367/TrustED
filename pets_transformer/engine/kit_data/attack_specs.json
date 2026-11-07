@@ -1,0 +1,591 @@
+{
+ "version": "1.0",
+ "description": "Background-knowledge linkage attacks run by `pets-eval scorecard`. Each spec says which attacker columns are matched to which protected columns and how loosely. QIs whose protected column you removed are skipped automatically. 'entity' groups rows of one subject: if all candidate rows share one entity value (e.g. one card pseudonym), the attacker has singled out that subject.",
+ "attacks": [
+  {
+   "adversary": "news_clips_health",
+   "dataset": "health",
+   "table": "ed_visits",
+   "sensitive": "icd10_primary",
+   "description": "Local news: date and place of an accident, approximate age, sex, sometimes a name.",
+   "qis": [
+    {
+     "kind": "time",
+     "adversary": [
+      "event_date",
+      "published_date"
+     ],
+     "protected": [
+      "arrival_ts"
+     ],
+     "window": [
+      96,
+      24
+     ]
+    },
+    {
+     "kind": "exact",
+     "adversary": [
+      "place"
+     ],
+     "protected": [
+      "municipality"
+     ]
+    },
+    {
+     "kind": "age",
+     "adversary": [
+      "age_mentioned"
+     ],
+     "protected": [
+      "date_of_birth",
+      "age",
+      "age_band"
+     ],
+     "tol": 3
+    },
+    {
+     "kind": "sex",
+     "adversary": [
+      "sex_mentioned"
+     ],
+     "protected": [
+      "sex"
+     ]
+    },
+    {
+     "kind": "name",
+     "adversary": [
+      "name_mentioned"
+     ],
+     "protected": [
+      "patient_name"
+     ]
+    }
+   ]
+  },
+  {
+   "adversary": "social_posts_health",
+   "dataset": "health",
+   "table": "ed_visits",
+   "sensitive": "icd10_primary",
+   "description": "Someone posts from the ED: time, first name, home city.",
+   "qis": [
+    {
+     "kind": "time",
+     "adversary": [
+      "posted_ts"
+     ],
+     "protected": [
+      "arrival_ts"
+     ],
+     "window": [
+      12,
+      1
+     ]
+    },
+    {
+     "kind": "exact",
+     "adversary": [
+      "profile_city"
+     ],
+     "protected": [
+      "municipality"
+     ]
+    },
+    {
+     "kind": "name",
+     "adversary": [
+      "display_name"
+     ],
+     "protected": [
+      "patient_name"
+     ]
+    }
+   ]
+  },
+  {
+   "adversary": "public_directory",
+   "dataset": "health",
+   "table": "ed_visits",
+   "sensitive": "icd10_primary",
+   "description": "Public address directory: name, street address, postcode, city.",
+   "qis": [
+    {
+     "kind": "name",
+     "adversary": [
+      "name"
+     ],
+     "protected": [
+      "patient_name"
+     ]
+    },
+    {
+     "kind": "postcode",
+     "adversary": [
+      "postcode"
+     ],
+     "protected": [
+      "postcode"
+     ]
+    },
+    {
+     "kind": "exact",
+     "adversary": [
+      "city"
+     ],
+     "protected": [
+      "municipality"
+     ]
+    }
+   ]
+  },
+  {
+   "adversary": "fitness_app_leak",
+   "dataset": "mobility",
+   "table": "bike_trips",
+   "entity": "user_account",
+   "description": "Leaked run start points (near home) and times; bike trips that start near the same home.",
+   "qis": [
+    {
+     "kind": "geo",
+     "adversary": [
+      "start_lat",
+      "start_lon"
+     ],
+     "protected": [
+      "start_lat",
+      "start_lon"
+     ]
+    },
+    {
+     "kind": "time",
+     "adversary": [
+      "start_time"
+     ],
+     "protected": [
+      "start_ts"
+     ],
+     "window": [
+      2,
+      2
+     ]
+    }
+   ]
+  },
+  {
+   "adversary": "public_directory",
+   "dataset": "mobility",
+   "table": "cards",
+   "sensitive": "card_type",
+   "description": "Directory lookup of personalised travel-card holders.",
+   "qis": [
+    {
+     "kind": "name",
+     "adversary": [
+      "name"
+     ],
+     "protected": [
+      "holder_name"
+     ]
+    },
+    {
+     "kind": "postcode",
+     "adversary": [
+      "postcode"
+     ],
+     "protected": [
+      "holder_postcode"
+     ]
+    }
+   ]
+  },
+  {
+   "adversary": "plate_sightings",
+   "dataset": "smart_city",
+   "table": "anpr_parking",
+   "entity": "plate",
+   "description": "Someone saw a known person's car at a car park at about a given time.",
+   "qis": [
+    {
+     "kind": "exact",
+     "adversary": [
+      "plate"
+     ],
+     "protected": [
+      "plate"
+     ]
+    },
+    {
+     "kind": "time",
+     "adversary": [
+      "seen_time_approx"
+     ],
+     "protected": [
+      "entry_ts"
+     ],
+     "window": [
+      3,
+      1
+     ]
+    }
+   ]
+  },
+  {
+   "adversary": "public_directory",
+   "dataset": "energy",
+   "table": "customers",
+   "sensitive": "medical_device_priority",
+   "description": "Directory lookup of electricity customers.",
+   "qis": [
+    {
+     "kind": "name",
+     "adversary": [
+      "name"
+     ],
+     "protected": [
+      "customer_name"
+     ]
+    },
+    {
+     "kind": "postcode",
+     "adversary": [
+      "postcode"
+     ],
+     "protected": [
+      "postcode"
+     ]
+    },
+    {
+     "kind": "exact",
+     "adversary": [
+      "city"
+     ],
+     "protected": [
+      "municipality"
+     ]
+    }
+   ]
+  },
+  {
+   "adversary": "receipt_photos_ocr",
+   "dataset": "finance",
+   "table": "card_transactions",
+   "entity": "card_pan",
+   "description": "A shared photo of a receipt: last four card digits, date, time, merchant, amount.",
+   "qis": [
+    {
+     "kind": "suffix",
+     "adversary": [
+      "card_masked"
+     ],
+     "protected": [
+      "card_pan"
+     ],
+     "tol": 4
+    },
+    {
+     "kind": "time",
+     "adversary": [
+      "receipt_date",
+      "receipt_time"
+     ],
+     "protected": [
+      "ts"
+     ],
+     "window": [
+      0.25,
+      0.25
+     ]
+    },
+    {
+     "kind": "number",
+     "adversary": [
+      "total"
+     ],
+     "protected": [
+      "amount_eur"
+     ],
+     "tol": 0.005
+    }
+   ]
+  },
+  {
+   "adversary": "public_directory",
+   "dataset": "finance",
+   "table": "customers",
+   "sensitive": "income_band",
+   "description": "Directory lookup of bank customers.",
+   "qis": [
+    {
+     "kind": "name",
+     "adversary": [
+      "name"
+     ],
+     "protected": [
+      "full_name"
+     ]
+    },
+    {
+     "kind": "postcode",
+     "adversary": [
+      "postcode"
+     ],
+     "protected": [
+      "postcode"
+     ]
+    },
+    {
+     "kind": "exact",
+     "adversary": [
+      "city"
+     ],
+     "protected": [
+      "city"
+     ]
+    }
+   ]
+  },
+  {
+   "adversary": "company_website_staff",
+   "dataset": "cyber",
+   "table": "identity",
+   "description": "Staff names from the company website and a professional network; names also hide in UPNs and hostnames.",
+   "qis": [
+    {
+     "kind": "name",
+     "adversary": [
+      "name"
+     ],
+     "protected": [
+      "display_name",
+      "given_name",
+      "surname",
+      "upn"
+     ]
+    }
+   ]
+  },
+  {
+   "adversary": "company_website_staff",
+   "dataset": "cyber",
+   "table": "signin_logs",
+   "entity": "upn",
+   "description": "Staff names matched to user principal names in sign-in logs.",
+   "qis": [
+    {
+     "kind": "name",
+     "adversary": [
+      "name"
+     ],
+     "protected": [
+      "upn"
+     ]
+    }
+   ]
+  },
+  {
+   "adversary": "graduation_lists",
+   "dataset": "education",
+   "table": "students",
+   "sensitive": "special_support",
+   "description": "Published graduate lists: name and school.",
+   "qis": [
+    {
+     "kind": "name",
+     "adversary": [
+      "graduate_name"
+     ],
+     "protected": [
+      "first_names",
+      "last_name"
+     ]
+    },
+    {
+     "kind": "exact",
+     "adversary": [
+      "school_name"
+     ],
+     "protected": [
+      "school_name"
+     ]
+    }
+   ]
+  },
+  {
+   "adversary": "sports_club_rosters",
+   "dataset": "education",
+   "table": "students",
+   "sensitive": "special_support",
+   "description": "Junior team rosters: name, birth year, home town.",
+   "qis": [
+    {
+     "kind": "name",
+     "adversary": [
+      "player_name"
+     ],
+     "protected": [
+      "first_names",
+      "last_name"
+     ]
+    },
+    {
+     "kind": "age",
+     "adversary": [
+      "birth_year"
+     ],
+     "protected": [
+      "birth_date"
+     ],
+     "tol": 0
+    },
+    {
+     "kind": "exact",
+     "adversary": [
+      "home_town"
+     ],
+     "protected": [
+      "municipality"
+     ]
+    }
+   ]
+  },
+  {
+   "adversary": "neighbourhood_forum_posts",
+   "dataset": "public_admin",
+   "table": "service_requests",
+   "entity": "reporter_account_id",
+   "description": "A neighbour posts that they reported something to the city.",
+   "qis": [
+    {
+     "kind": "time",
+     "adversary": [
+      "post_time"
+     ],
+     "protected": [
+      "ts_created"
+     ],
+     "window": [
+      72,
+      2
+     ]
+    },
+    {
+     "kind": "postcode",
+     "adversary": [
+      "neighbourhood"
+     ],
+     "protected": [
+      "postcode"
+     ]
+    }
+   ]
+  },
+  {
+   "adversary": "public_directory",
+   "dataset": "public_admin",
+   "table": "service_requests",
+   "description": "Directory lookup of reporters.",
+   "qis": [
+    {
+     "kind": "name",
+     "adversary": [
+      "name"
+     ],
+     "protected": [
+      "reporter_name"
+     ]
+    },
+    {
+     "kind": "postcode",
+     "adversary": [
+      "postcode"
+     ],
+     "protected": [
+      "postcode"
+     ]
+    }
+   ]
+  },
+  {
+   "adversary": "leaked_customer_list",
+   "dataset": "customer_service",
+   "table": "customers",
+   "sensitive": "accessibility_needs",
+   "description": "An old marketing list with names, emails, phones and cities.",
+   "qis": [
+    {
+     "kind": "name",
+     "adversary": [
+      "name"
+     ],
+     "protected": [
+      "full_name"
+     ]
+    },
+    {
+     "kind": "exact",
+     "adversary": [
+      "email"
+     ],
+     "protected": [
+      "email"
+     ]
+    },
+    {
+     "kind": "exact",
+     "adversary": [
+      "city"
+     ],
+     "protected": [
+      "city"
+     ]
+    }
+   ]
+  }
+ ],
+ "trajectories": [
+  {
+   "dataset": "mobility",
+   "table": "taps",
+   "user": "card_id",
+   "time": "ts",
+   "place": "stop_id",
+   "p": 4,
+   "temporal": "1h",
+   "description": "Unicity: share of travel cards singled out by 4 known (stop, hour) points (de Montjoye et al. 2013)."
+  },
+  {
+   "dataset": "mobility",
+   "table": "bike_trips",
+   "user": "user_account",
+   "time": "start_ts",
+   "lat": "start_lat",
+   "lon": "start_lon",
+   "p": 3,
+   "temporal": "1h",
+   "spatial_m": 500,
+   "description": "Unicity of bike accounts from 3 known (500 m cell, hour) trip starts."
+  },
+  {
+   "dataset": "smart_city",
+   "table": "wifi_probes",
+   "user": "mac",
+   "time": "ts",
+   "place": "sensor_id",
+   "p": 3,
+   "temporal": "1h",
+   "description": "Unicity of devices from 3 known (sensor, hour) sightings."
+  },
+  {
+   "dataset": "smart_city",
+   "table": "anpr_parking",
+   "user": "plate",
+   "time": "entry_ts",
+   "place": "car_park",
+   "p": 2,
+   "temporal": "1h",
+   "description": "Unicity of vehicles from 2 known (car park, hour) entries."
+  }
+ ]
+}

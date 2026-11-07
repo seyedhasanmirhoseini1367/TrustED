@@ -21,7 +21,7 @@
 </div>
 <div class="card"><h2>Suitable for</h2>
   <p><b>{{ r.scenario.recipient_label }}</b>{% if r.scenario.description %}: {{ r.scenario.description }}{% endif %}</p>
-  <p>{% if r.target_met %}The release meets the scenario target: linkage attack success {{ r.metrics.after.linkage|pct }}
+  <p>{% if r.target_met %}The release meets the scenario target: re-identification rate {{ r.metrics.after.linkage|pct }}
     (≤ {{ r.scenario.max_linkage|pct:0 }}), every equivalence class ≥ {{ r.metrics.after.min_k }} records.{% else %}
     <span class="status bad">The target was not met</span> — do not release at this trust level; see residual risks.{% endif %}</p>
   <p class="hint">Not suitable for a more open release (e.g. public open data) without re-running with that recipient's stricter target.</p>
