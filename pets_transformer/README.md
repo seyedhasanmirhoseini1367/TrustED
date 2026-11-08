@@ -97,6 +97,45 @@ non-sensitive 0.82. Detection uses only column names, values and table structure
 were improved while looking at errors on this public catalog, so the organisers' private `unseen` labels are the
 honest test. Our labels for it: `../pets_submission/unseen_field_labels.csv`.
 
+### The `unseen` dataset (no labels, headers `c01`…`c26`)
+
+The kit's surprise table: an HR/payroll export of a care company, 2,818 rows × 26 columns, uninformative headers and
+mixed formats. The tool only sees the values. Run with default settings (research partner, ≤ 5 % re-identification,
+k ≥ 5; purposes: statistical analysis and charts; every detected quasi-identifier assumed known):
+
+```bash
+python -m engine.cli run <kit>/data/unseen/export_2025_q4.csv --scenario scenario.json --out out/unseen   # ~4 s
+```
+
+**What it detected** (from values only; the organisers hold the true labels, so detection accuracy is not measured here):
+
+| Detected as | Columns | Examples of what was recognised |
+|---|---|---|
+| Direct identifiers | c04, c05, c07, c08, c09, c10, c18 | names in "Surname Given" and UPPERCASE, identity codes with or without separator (validated by the check character), addresses with postcode and city, phones, e-mails, IBANs, licence plates |
+| Technical identifiers | c01 (row key), c02, c17, c20 | coded keys (`R001996`, `KC-4450`), a 45-character hex hash |
+| Quasi-identifiers | c03, c06, c23 | dates in several formats; c06 recognised as **birth dates** because its dates span decades |
+| Free text | c16 | sick-leave notes |
+| Other | c11–c15, c19, c21, c22, c24–c26 | amounts with Finnish decimal commas (`3 987,96`), categories, percentages |
+
+**What it did and the result:**
+
+| | Before | After |
+|---|---|---|
+| Re-identification rate (exact-knowledge test on c03, c06, c23) | 100 % | **0 %** |
+| Minimum k | 1 | **79** |
+| Rows suppressed | — | **0 %** (all 2,818 released) |
+| Columns released | 26 | 18 |
+| Privacy / utility / overall score | — | **1.00 / 0.92 / 0.96** (statistical analysis 1.00, charts 0.84) |
+
+- Identifiers: names, addresses, phones, e-mails, IBANs and plates dropped; identity codes, keys and the hash replaced
+  by keyed pseudonyms (records stay linkable).
+- Quasi-identifiers: birth date → age in 10-year bands (released as `age`); the two other date columns dropped, the
+  cheapest way to reach the target here.
+- Free text c16: 824 entities replaced (324 health mentions, 241 dates, 225 names, 32 ages, 2 places). Health terms
+  are redacted because the table is HR data, where sick-leave details are sensitive personal information.
+- Residual risk: the remaining columns (amounts, categories) are released unchanged because the threat model does not
+  assume them known; a stronger attacker who knows a salary could narrow candidates.
+
 ## 2. Web wizard
 
 ```bash
@@ -104,21 +143,33 @@ python manage.py migrate
 python manage.py runserver        # http://127.0.0.1:8000 → upload a file or "Load sample dataset"
 ```
 
-1. **Upload** CSV/XLSX, or the built-in sample. **Files over 50,000 rows are reduced to a reproducible random sample
-   of 50,000 rows (seed 42)** and the page says so; protection and metrics then apply to that sample. Use the CLI
-   for full kit tables (the kit's scorecard expects the full table).
+1. **Upload** CSV/XLSX, or the built-in sample. Select **several files at once** to protect related tables together
+   (see below). **Files over 50,000 rows are reduced to a reproducible random sample of 50,000 rows (seed 42)** and
+   the page says so; protection and metrics then apply to that sample. Use the CLI for full kit tables (the kit's
+   scorecard expects the full table).
 2. **Profile**: detected role per column, confidence, red/yellow/green gate and reason; override inline (HTMX).
 3. **Scenario: threat model + tasks** — one column, top to bottom: the official kit scenario (preselected for kit
    tables, with a read-only summary), who receives the data (public ≤ 1 % / k ≥ 10, research partner ≤ 5 % / k ≥ 5,
    internal ≤ 10 % / k ≥ 3; changing it updates the known-attribute ticks — the internal team also knows insider
-   columns), the purpose (prediction model for categories or numbers, statistical analysis, charts) with its target,
-   the threat model's known attributes, and collapsed advanced settings (seed, thresholds, per-column limits).
+   columns), the purposes — one or several of: prediction model for categories, prediction model for numbers,
+   statistical analysis, charts — with one or more targets per model type (only columns that fit the type are
+   offered; one model per target), the threat model's known attributes, and collapsed advanced settings (seed,
+   thresholds, per-column limits). A kit scenario is a preset: it fills these fields, which stay editable.
    A sticky bar shows, live and on the original data only, how many people the known attributes single out today.
-4. **Results**: KPI cards, trade-off chart (the final point is marked "target not met" when no step met it),
+4. **Results**: KPI cards including an overall score (privacy = 1 − (½ worst risk + ½ mean risk); overall = weighted
+   harmonic mean of privacy and utility, as the kit's composite), utility per purpose, trade-off chart (the dashed
+   line is the re-identification target; the final point is marked "target not met" when no step met it),
    decision table with numeric reasons and the limits/overrides that constrained each column, before/after preview,
    free-text redaction with measured recall, residual risks, DP aggregate panel.
 5. **Export**: protected CSV (original file name), row map (internal), JSON report, printable HTML report.
    Never the original or the secret.
+
+**Several related tables.** Upload them together: links are detected from the values (a column whose values appear
+in another table's unique key, or the same identifier in two tables) and can be unticked. Tables are protected
+parents first; for a linked table the threat model also contains what its parent table releases, so the joined data
+cannot single anyone out either. Link columns are released as keyed pseudonyms (one secret), so the tables still
+join; the results page shows how many links survive. Export: one zip with every table, its row map and reports.
+The CLI does the same when given several files (`--no-links` protects them independently).
 
 ## 3. Generic CLI and built-in sample
 
