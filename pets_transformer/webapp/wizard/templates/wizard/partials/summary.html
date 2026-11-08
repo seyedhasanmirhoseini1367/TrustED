@@ -1,0 +1,4 @@
+{% load pets %}{% if problems %}<span class="bad">{% for p in problems %}{{ p }} {% endfor %}</span>
+{% if n_known is not None %}<br>{% endif %}{% endif %}{% if n_known is not None %}With <b>{{ n_known }}</b> known attribute{{ n_known|pluralize }},
+<b>{{ unique|pct }}</b> of people are currently re-identifiable (unique). Target: ≤ <b>{{ target_rate|pct:0 }}</b>, k ≥ <b>{{ min_k }}</b>.
+Utility measured by: {{ metric }}.{% if kit %} <span class="hint">({{ kit }})</span>{% endif %}{% endif %}

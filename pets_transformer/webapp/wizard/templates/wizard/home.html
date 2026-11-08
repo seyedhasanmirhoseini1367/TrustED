@@ -8,7 +8,9 @@ scenario, and proves with a re-identification test and utility tests that risk d
 <div class="row">
   <form class="card" method="post" action="{% url 'upload' %}" enctype="multipart/form-data" onsubmit="busy(this)">{% csrf_token %}
     <h2>Upload CSV or XLSX</h2>
-    <div class="field"><label>Dataset</label><div class="hint">Larger files are reduced to a reproducible random sample of 50,000 rows.</div><input type="file" name="data" accept=".csv,.xlsx,.xls" required></div>
+    <div class="field"><label>Dataset</label><div class="hint">Larger files are reduced to a reproducible random sample of 50,000 rows.</div><input type="file" name="data" accept=".csv,.xlsx,.xls" multiple required></div>
+    <div class="hint">You can select <b>several files at once</b> (Ctrl / Shift + click). Related tables are linked
+      automatically (e.g. a visit id shared by visits and lab results) and protected together.</div>
     <div class="field"><label>Ground-truth PII spans (optional JSON)</label><input type="file" name="spans" accept=".json">
       <div class="hint">If present, free-text redaction recall is measured against it.</div></div>
     <button class="btn" type="submit">Upload and continue →</button>
@@ -27,8 +29,10 @@ scenario, and proves with a re-identification test and utility tests that risk d
 <tr><th>Created</th><th>Dataset</th><th>Size</th><th>Status</th><th></th></tr>
 {% for j in jobs %}<tr><td>{{ j.created|date:"Y-m-d H:i" }}</td><td>{{ j.name }}</td><td>{{ j.n_rows }} × {{ j.n_cols }}</td>
 <td>{{ j.status }}</td><td>
-  {% if j.status == 'done' %}<a href="{% url 'results' j.id %}">results</a> · {% endif %}<a href="{% url 'profile' j.id %}">profile</a>
-  <form method="post" action="{% url 'delete' j.id %}" style="display:inline">{% csrf_token %}<button class="btn small secondary" type="submit">delete</button></form>
+  {% if j.kind == 'project' %}{% if j.status == 'done' %}<a href="{% url 'project_results' j.id %}">results</a> · {% endif %}<a href="{% url 'project' j.id %}">tables &amp; links</a>
+  <form method="post" action="{% url 'project_delete' j.id %}" style="display:inline">{% csrf_token %}<button class="btn small secondary" type="submit">delete</button></form>
+  {% else %}{% if j.status == 'done' %}<a href="{% url 'results' j.id %}">results</a> · {% endif %}<a href="{% url 'profile' j.id %}">profile</a>
+  <form method="post" action="{% url 'delete' j.id %}" style="display:inline">{% csrf_token %}<button class="btn small secondary" type="submit">delete</button></form>{% endif %}
 </td></tr>{% endfor %}
 </table></div></div>
 {% endif %}

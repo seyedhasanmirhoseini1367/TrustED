@@ -79,6 +79,10 @@ class Ladder:
         """Column name in the released table (a ladder may release a derived column, e.g. age instead of DOB)."""
         return self.column
 
+    def drops(self, level: int) -> bool:
+        """True when this level removes the column from the release altogether."""
+        return False
+
     def level_index(self, name: str | int) -> int:
         """Level from its index or (case-insensitive prefix of) its name."""
         if isinstance(name, int) or str(name).isdigit():
@@ -463,31 +467,42 @@ class PostcodeLadder(Ladder):
 
 
 class CategoricalLadder(Ladder):
-    """Merge rare categories into 'Other' (< 1 %, then < 5 %), then an optional user hierarchy."""
+    """Categories: merge rare ones into 'Other' (< 1 %, then < 5 %), an optional user hierarchy, then for
+    many-valued columns (employer, occupation) keep only the top 20 / top 5 categories, then suppress every value
+    ('*'), and finally drop the column. Levels that change nothing for a column are skipped by the search."""
     name = "categories"
     entropy_loss = True
 
     def __init__(self, column: str, hierarchy: dict[str, str] | None = None):
         super().__init__(column)
         self.hierarchy = hierarchy or {}
+        self.steps: list[tuple] = [("exact",), ("rare", 0.01), ("rare", 0.05)]
         self.level_names = ["exact", "merge categories < 1 % into Other", "merge categories < 5 % into Other"]
         if self.hierarchy:
+            self.steps.append(("hierarchy",))
             self.level_names.append("user-provided hierarchy")
+        self.steps += [("top", 20), ("top", 5), ("star",), ("drop",)]
+        self.level_names += ["top 20 categories + Other", "top 5 categories + Other", "* (all values suppressed)",
+                             "column dropped"]
 
     def fit(self, s: pd.Series) -> "Ladder":
         super().fit(s)
         self.freq = s.astype("string").value_counts(normalize=True, dropna=True)
         return self
 
+    def drops(self, level: int) -> bool:
+        return self.steps[min(level, self.max_level)][0] == "drop"
+
     def apply(self, s: pd.Series, level: int) -> pd.Series:
         if level <= 0:
             return s
-        level = min(level, self.max_level)
+        step = self.steps[min(level, self.max_level)]
         v = s.astype("string")
-        if level == 3:
+        if step[0] == "hierarchy":
             return v.map(lambda x: self.hierarchy.get(x, "Other") if pd.notna(x) else pd.NA).astype("string")
-        thr = 0.01 if level == 1 else 0.05
-        keep = set(self.freq[self.freq >= thr].index)
+        if step[0] in ("star", "drop"):   # a dropped column carries no information either: '*' internally
+            return v.where(v.isna(), "*")
+        keep = set(self.freq[self.freq >= step[1]].index) if step[0] == "rare" else set(self.freq.index[:step[1]])
         return v.where(v.isin(keep) | v.isna(), "Other")
 
 
@@ -557,3 +572,53 @@ def make_ladder(column: str, ladder: str | None, hierarchy: dict[str, str] | Non
         "categorical": lambda: CategoricalLadder(column),
         "code": lambda: CodeLadder(column),
     }.get(ladder or "", lambda: None)()
+
+
+class DroppableLadder(Ladder):
+    """Any ladder plus a final 'column dropped' level, for quasi-identifiers: when no generalisation is enough, the
+    column is left out of the release (full information loss in the utility proxy; '*' for risk computations)."""
+    entropy_loss = False
+
+    def __init__(self, inner: Ladder):
+        super().__init__(inner.column)
+        self.inner = inner
+        self.name = inner.name
+        self.level_names = list(inner.level_names) + ["column dropped"]
+        self.numeric_capable = inner.numeric_capable
+
+    @property
+    def _drop(self) -> int:
+        return len(self.level_names) - 1
+
+    def fit(self, s: pd.Series) -> "Ladder":
+        self.inner.fit(s)
+        self._fit_series = s
+        return self
+
+    def drops(self, level: int) -> bool:
+        return level >= self._drop
+
+    def apply(self, s: pd.Series, level: int) -> pd.Series:
+        return s.astype("string").where(s.isna(), "*") if self.drops(level) else self.inner.apply(s, level)
+
+    def numeric(self, s: pd.Series, level: int) -> pd.Series | None:
+        if self.drops(level):
+            return pd.Series(np.nan, index=s.index, dtype=float)
+        return self.inner.numeric(s, level)
+
+    def tolerance_value(self, s: pd.Series):
+        return self.inner.tolerance_value(s)
+
+    def interval(self, s: pd.Series, level: int):
+        if self.drops(level):
+            return pd.Series(-np.inf, index=s.index), pd.Series(np.inf, index=s.index)
+        return self.inner.interval(s, level)
+
+    def info_loss(self, level: int) -> float:
+        return 1.0 if self.drops(level) else self.inner.info_loss(level)
+
+    def output_name(self, level: int) -> str:
+        return self.inner.output_name(min(level, self._drop - 1))
+
+    def describe(self, level: int) -> str:
+        return f"{self.name} → column dropped" if self.drops(level) else self.inner.describe(level)

@@ -101,7 +101,10 @@ def apply_plan(df: pd.DataFrame, profiles: list[ColumnProfile], ladders: dict[st
             else:
                 out[p.name] = s
         elif p.gate == Gate.YELLOW and p.name in ladders:
-            out[p.name] = ladders[p.name].apply(s, plan.levels.get(p.name, 0))
+            lvl = plan.levels.get(p.name, 0)
+            if ladders[p.name].drops(lvl):
+                continue   # final ladder level: the quasi-identifier is not released at all
+            out[p.name] = ladders[p.name].apply(s, lvl)
         else:
             out[p.name] = s
     result = pd.DataFrame(out, index=df.index)

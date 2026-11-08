@@ -4,7 +4,7 @@
 {% block content %}
 <h1>Step 4 — Results
   {% if r.target_met %}<span class="status ok">target met</span>{% else %}<span class="status bad">target NOT met</span>{% endif %}</h1>
-<p class="sub"><b>{{ r.scenario.recipient_label }}</b> · purpose: {{ r.scenario.task_type }}{% if r.scenario.target %} of <code>{{ r.scenario.target }}</code>{% endif %}
+<p class="sub"><b>{{ r.scenario.recipient_label }}</b> · purposes: {% for p in r.scenario.purposes %}{{ p }}{% if r.scenario.targets|get:p %} (<code>{{ r.scenario.targets|get:p|joinlist }}</code>){% endif %}{% if not forloop.last %}, {% endif %}{% empty %}{{ r.scenario.task_type }}{% endfor %}
  · target: re-identification rate ≤ {{ r.scenario.max_linkage|pct:0 }}, k ≥ {{ r.scenario.min_k }} · seed {{ r.scenario.seed }} · {{ r.runtime_seconds }} s</p>
 {% if r.scenario.description %}<div class="card"><b>Sharing scenario.</b> {{ r.scenario.description }}</div>{% endif %}
 
@@ -28,8 +28,11 @@
 <div class="row">
   <div class="card" style="flex:2">
     <h2>Privacy / utility trade-off</h2>
-    <p class="hint">Every greedy step is a point (x = 1 − re-identification rate, y = utility). The search stops at the first point that meets the
-      target — the chosen point (★). Hover for the move taken.</p>
+    <p class="hint">Every greedy step is a point (x = 1 − re-identification rate, y = utility). The dashed red line is the
+      re-identification target: points to its right meet it.
+      {% if r.target_met %}The search stops at the first point that meets the target — the chosen point (★).
+      {% else %}<span class="bad">No step met the target:</span> the search ran out of allowed moves; the last point is marked
+      "Final point (target not met)" (✕). See residual risks.{% endif %} Hover for the move taken.</p>
     <div class="chartbox"><canvas id="tradeoff"></canvas></div>
   </div>
   <div class="card" style="flex:1">
@@ -48,6 +51,12 @@
       <td>{% if d.attacker_knows %}yes{% else %}<span class="muted">no</span>{% endif %}</td>
       <td>{{ d.pet }}</td><td>{{ d.level }}</td><td>{{ d.reason }}</td></tr>{% endfor %}
   </table></div>
+  <h3>What constrained each column</h3>
+  {% if constraints %}<div class="tbl"><table><tr><th>Column</th><th>Constraint</th><th>Effect</th></tr>
+    {% for c in constraints %}<tr><td class="mono">{{ c.column }}</td><td>{{ c.kind }}: {{ c.detail }}</td>
+      <td>{% if c.binding %}<b>reached this limit</b>{% else %}<span class="muted">not reached</span>{% endif %}</td></tr>{% endfor %}
+  </table></div>
+  {% else %}<p class="hint">No per-column limit, privacy floor or user override applied: every level was chosen freely by the search.</p>{% endif %}
 </div>
 
 <div class="card">
@@ -97,21 +106,29 @@
 <div class="card">
   <h2>Utility</h2>
   <div class="row">
-    {% if r.utility.task %}{% with t=r.utility.task %}
+    {% if r.utility.by_purpose %}<div style="flex-basis:100%"><h3>Utility by purpose</h3><div class="tbl"><table>
+      <tr><th>Purpose</th><th>Score</th><th>Measured by</th></tr>
+      {% for k, v in r.utility.by_purpose.items %}<tr><td>{{ k }}</td><td><b>{{ v.score|num:3 }}</b></td><td>{{ v.measured_by }}</td></tr>{% endfor %}
+      </table></div><p class="hint">Utility score {{ r.utility.score|num:3 }} = mean over the selected purposes.</p></div>{% endif %}
+    {% for t in r.utility.tasks|default_if_none:"" %}
     <div><h3>Task utility: {{ t.task }} of <code>{{ t.target }}</code></h3>
       <p class="hint">{{ t.model }}. The original data was split 80/20 <b>before</b> transformation; the same plan was applied to both parts.</p>
       <div class="tbl"><table>
         <tr><th>Metric</th><th>Original</th><th>Protected</th><th>Retained</th></tr>
         {% for m, v in t.original.items %}<tr><td>{{ m }}</td><td>{{ v|num:3 }}</td><td>{{ t.protected|get:m|num:3 }}</td><td>{{ t.retained|get:m|pct }}</td></tr>{% endfor %}
       </table></div>
-      <p class="hint">Train {{ t.train_rows }} rows ({{ t.protected_train_rows }} after suppression), test {{ t.test_rows }} rows.</p></div>
-    {% endwith %}{% endif %}
+      <p class="hint">Train {{ t.train_rows }} rows ({{ t.protected_train_rows }} after suppression), test {{ t.test_rows }} rows.</p>
+      <p><b>Task score {{ t.score|num:3 }}</b> = {{ t.score_formula }}</p></div>
+    {% endfor %}
     {% with d=r.utility.descriptive %}
     <div><h3>Descriptive fidelity</h3>
-      <p>{{ d.n_queries }} aggregate queries (counts and means by {{ d.group_columns|joinlist }}): mean relative error <b>{{ d.query_mean_rel_error|pct:2 }}</b>.
-        Distribution score {{ d.distribution_score|num:3 }} (TVD on the protected granularity, Wasserstein on midpoints).</p>
-      <div class="tbl"><table><tr><th>Column</th><th>TVD</th><th>Wasserstein / sd</th></tr>
-        {% for x in d.distributions %}<tr><td class="mono">{{ x.column }}</td><td>{{ x.tvd|num:3 }}</td><td>{{ x.wasserstein_sd|num:3 }}</td></tr>{% endfor %}
+      <p>{{ d.n_queries }} aggregate queries on the original columns (counts and means by {{ d.group_columns|joinlist }}),
+        answered from the protected data: mean relative error <b>{{ d.query_mean_rel_error|pct:2 }}</b> (query score {{ d.query_score|num:3 }}).
+        Distribution score {{ d.distribution_score|num:3 }}. Descriptive score {{ d.score|num:3 }} = mean(query score, distribution score).</p>
+      <p class="hint">{{ d.method }}</p>
+      <div class="tbl"><table><tr><th>Column</th><th>TVD over original categories</th><th>Wasserstein / sd (original values vs protected midpoints)</th></tr>
+        {% for x in d.distributions %}<tr><td class="mono">{{ x.column }}</td>{% if x.released %}<td>{{ x.tvd|num:3 }}</td><td>{{ x.wasserstein_sd|num:3 }}</td>
+        {% else %}<td colspan="2" class="muted">not released (scores 0)</td>{% endif %}</tr>{% endfor %}
       </table></div></div>
     {% endwith %}
   </div>
@@ -169,7 +186,9 @@ new Chart(document.getElementById('tradeoff'), {
   data: { datasets: [
     { label: 'Utility proxy (search)', data: C.proxy, showLine: true, borderColor: '#5b7bd5', backgroundColor: '#5b7bd5', pointRadius: 4 },
     { label: 'Task metric retained', data: C.task, showLine: true, borderColor: '#13795b', backgroundColor: '#13795b', pointRadius: 5, pointStyle: 'rectRot' },
-    { label: 'Chosen point', data: finalPt ? [finalPt] : [], pointStyle: 'star', pointRadius: 14, borderWidth: 2, borderColor: '#d92d20', backgroundColor: '#d92d20' },
+    C.target_met
+      ? { label: 'Chosen point (target met)', data: finalPt ? [finalPt] : [], pointStyle: 'star', pointRadius: 14, borderWidth: 2, borderColor: '#d92d20', backgroundColor: '#d92d20' }
+      : { label: 'Final point (target not met)', data: finalPt ? [finalPt] : [], pointStyle: 'crossRot', pointRadius: 12, borderWidth: 3, borderColor: '#f79009', backgroundColor: '#f79009' },
     { label: 'Risk target', data: [{x: C.target_x, y: 0}, {x: C.target_x, y: 1.05}], showLine: true, borderDash: [6, 4], borderColor: '#b42318', pointRadius: 0 },
   ]},
   options: { maintainAspectRatio: false, animation: false,

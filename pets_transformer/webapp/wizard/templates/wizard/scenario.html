@@ -5,79 +5,108 @@
 <p class="sub">A PET choice is only right or wrong for a given recipient and purpose. The scenario sets the risk target, the threat model
 (what may already be known about people) and what utility must be preserved.</p>
 <div id="err">{% if error %}<div class="error">{{ error }}</div>{% endif %}</div>
-<form method="post" action="{% url 'scenario' job.id %}" hx-post="{% url 'scenario' job.id %}" hx-target="#err" hx-indicator="#overlay">{% csrf_token %}
+<form id="scenario-form" method="post" action="{% url 'scenario' job.id %}" hx-post="{% url 'scenario' job.id %}" hx-target="#err" hx-indicator="#overlay">{% csrf_token %}
+<div class="stack">
+
 {% if kit_options %}
 <div class="card">
-  <h2>Official starter-kit scenario <span class="hint">(this table matches the kit's <code>{{ kit_options.0.dataset }}/{{ kit_options.0.table }}</code>)</span></h2>
+  <h2>1. Official kit scenario <span class="hint">(this table matches the kit's <code>{{ kit_options.0.dataset }}/{{ kit_options.0.table }}</code>)</span></h2>
   <div class="field"><select name="kit_scenario" id="kit_scenario">
-    <option value="">— none: use the settings below —</option>
-    {% for s in kit_options %}<option value="{{ s.id }}" {% if s.id == sc.kit_scenario %}selected{% endif %}>{{ s.id }} · {{ s.title }} ({{ s.trust_level }})</option>{% endfor %}
-  </select>
-  <div class="hint">When selected, the recipient, the threat model's known attributes (every catalogued quasi-identifier, as the kit counts k) and the
-    utility requirements come from the kit scenario; the column limits below still apply. Score the export with
-    <code>pets-eval scorecard</code>.</div></div>
+    <option value="">— none: set the scenario myself below —</option>
+    {% for s in kit_options %}<option value="{{ s.id }}" {% if s.id == selected_kit %}selected{% endif %}>{{ s.id }} · {{ s.title }} ({{ s.trust_level }})</option>{% endfor %}
+  </select></div>
   {% for s in kit_options %}<div class="kit-tasks" data-kit="{{ s.id }}" hidden>
-    <p><b>{{ s.recipient }}</b> — {{ s.purpose }}<br><span class="hint">{{ s.threat_model }}</span></p>
-    <p><b>Utility tasks to keep answerable</b></p>
-    {% for t in s.tasks %}<label class="chk"><input type="checkbox" name="kit_tasks__{{ s.id }}" value="{{ t.id }}"
-      {% if sc.kit_scenario == s.id %}{% if t.id in sc.kit_tasks %}checked{% endif %}{% elif t.default %}checked{% endif %}>
-      <b>{{ t.id }}</b> {{ t.desc }}{% if t.conflict %} <span class="hint">— off by default: {{ t.conflict }}, which conflicts with k ≥ 5</span>{% endif %}</label><br>{% endfor %}
+    <dl class="ro">
+      <dt>Recipient</dt><dd>{{ s.recipient }} — {{ s.purpose }}</dd>
+      <dt>Threat model</dt><dd>{{ s.threat_model }}<br><span class="hint">Known attributes: {{ s.known|joinlist }}</span></dd>
+      {% if s.caps %}<dt>Utility limits</dt><dd>{% for c, l in s.caps.items %}<code>{{ c }}</code> at most "{{ l }}"{% if not forloop.last %} · {% endif %}{% endfor %}
+        <br><span class="hint">from the ticked tasks; a limit you set under Advanced settings overrides it</span></dd>{% endif %}
+      <dt>Required tasks</dt><dd>
+        {% for t in s.tasks %}<label class="chk"><input type="checkbox" name="kit_tasks__{{ s.id }}" value="{{ t.id }}"
+          {% if sc.kit_scenario == s.id %}{% if t.id in sc.kit_tasks %}checked{% endif %}{% elif t.default %}checked{% endif %}>
+          <b>{{ t.id }}</b> {{ t.desc }}{% if t.conflict %} <span class="hint">— off by default: {{ t.conflict }}, which conflicts with k ≥ 5</span>{% endif %}</label><br>{% endfor %}
+      </dd>
+    </dl>
+    <p class="hint">Selecting a kit scenario fills in the sections below (recipient, purposes and targets, known attributes);
+      you can still change all of them. Its tasks add the utility limits shown above.</p>
   </div>{% endfor %}
 </div>
 {% endif %}
-<div class="row">
-  <div class="card">
-    <h2>Recipient &amp; risk target</h2>
-    <div class="field"><label>Recipient</label>
-      <select name="recipient" id="recipient">
-        {% for key, r in recipients.items %}<option value="{{ key }}" {% if key == sc.recipient %}selected{% endif %}>{{ r.label }} (re-identification ≤ {{ r.max_linkage|pct:0 }}, k ≥ {{ r.min_k }})</option>{% endfor %}
-      </select></div>
-    <div class="row">
-      <div class="field"><label>Max re-identification rate (%)</label>
-        <input type="number" step="0.1" min="0" max="100" name="max_linkage" id="max_linkage" value="{{ sc.max_linkage|mul100 }}">
-        <div class="hint">empty = recipient default</div></div>
-      <div class="field"><label>Minimum k</label>
-        <input type="number" min="1" max="100" name="min_k" id="min_k" value="{{ sc.min_k|default_if_none:'' }}">
-        <div class="hint">empty = recipient default</div></div>
-    </div>
-    <div class="field"><label>Scenario description (shown in the report)</label>
-      <textarea name="description" placeholder="Who receives the data, why, under what agreement">{{ sc.description }}</textarea></div>
-    <div class="field"><label>Random seed</label><input type="number" name="seed" value="{{ sc.seed|default:42 }}"></div>
+
+<fieldset id="manual" class="stack">
+<div class="card">
+  <h2>{% if kit_options %}2. {% endif %}Who receives the data</h2>
+  <div class="field"><select name="recipient" id="recipient">
+    {% for key, r in recipients.items %}<option value="{{ key }}" {% if key == sc.recipient %}selected{% endif %}>{{ r.label }} (re-identification ≤ {{ r.max_linkage|pct:0 }}, k ≥ {{ r.min_k }})</option>{% endfor %}
+  </select></div>
+  <div id="recipient-note" class="hint"></div>
+  <div class="field"><label>Scenario description (shown in the report)</label>
+    <textarea name="description" placeholder="Who receives the data, why, under what agreement">{{ sc.description }}</textarea></div>
+</div>
+
+<div class="card">
+  <h2>{% if kit_options %}3. {% endif %}Purpose: what will the data be used for?</h2>
+  <p class="hint">Tick one or several. The utility score is the mean over the ticked purposes.</p>
+  <div class="purposes">
+    {% for value, label, hint in purposes %}<label class="purpose"><input type="checkbox" name="purposes" value="{{ value }}"
+      {% if value in sc.purposes or not sc.purposes and sc.task_type == value %}checked{% endif %}>
+      <span><b>{{ label }}</b><br><span class="hint">{{ hint }}</span></span></label>{% endfor %}
   </div>
-  <div class="card">
-    <h2>Threat model: known attributes</h2>
-    <p>Who receives the data and what they may already know about people in it. The tool generalises the data until
-      these known attributes can no longer single anyone out.</p>
-    <p class="hint">Columns assumed to be known exactly for some people (pre-filled with every quasi-identifier).
-      Columns that follow from these (e.g. city from postcode) are added automatically.</p>
-    {% for p in qi_cols %}<label class="chk"><input type="checkbox" name="attacker_qis" value="{{ p.name }}" {% if p.name in sc.attacker_qis %}checked{% endif %}>
-      <code>{{ p.name }}</code> <span class="gate {{ p.gate }}" style="font-size:10px">{{ p.role }}</span></label><br>{% endfor %}
-  </div>
-  <div class="card">
-    <h2>Purpose</h2>
-    <div class="field"><label>Task type</label>
-      <select name="task_type">
-        <option value="classification" {% if sc.task_type == "classification" %}selected{% endif %}>Classification (ROC-AUC, F1)</option>
-        <option value="regression" {% if sc.task_type == "regression" %}selected{% endif %}>Regression (R², MAE)</option>
-        <option value="descriptive" {% if sc.task_type == "descriptive" %}selected{% endif %}>Descriptive statistics</option>
-        <option value="visualization" {% if sc.task_type == "visualization" %}selected{% endif %}>Visualization</option>
-      </select></div>
-    <div class="field"><label>Target column (for ML)</label>
-      <select name="target"><option value="">— none —</option>
-        {% for p in all_cols %}<option value="{{ p.name }}" {% if p.name == sc.target %}selected{% endif %}>{{ p.name }}</option>{% endfor %}
-      </select></div>
-    <div class="field"><label>Key columns to preserve <span class="hint">(utility weight × 3)</span></label>
-      {% for p in all_cols %}<label class="chk"><input type="checkbox" name="key_columns" value="{{ p.name }}" {% if p.name in sc.key_columns %}checked{% endif %}><code>{{ p.name }}</code></label>{% endfor %}
-    </div>
-    {% if cap_cols %}<div class="field"><label>Utility requirements <span class="hint">(coarsest level the search may use)</span></label>
-      <table>{% for c in cap_cols %}<tr><td><code>{{ c.name }}</code></td><td>
-        <select name="cap__{{ c.name }}"><option value="">no limit</option>
-          {% for i, lab in c.levels %}<option value="{{ i }}" {% if c.current == i|stringformat:"d" %}selected{% endif %}>{{ lab }}</option>{% endfor %}
-        </select></td></tr>{% endfor %}</table>
-      <div class="hint">E.g. keep arrival times at "week" for weekly trends. Limits can make the risk target unreachable; the report then says so.</div>
-    </div>{% endif %}
+  {% for kind, title, fits, opts in target_kinds %}
+  <div class="field target-field" data-purpose="{{ kind }}"><label>Target columns for "{{ title }}"
+      <span class="hint">(one or several, up to 5; one model per target; only {{ fits }} are offered)</span></label>
+    {% with chosen=sc.targets|get:kind %}
+    {% if not opts.plain and not opts.qi %}<p class="hint">No column of this kind in the table.</p>{% endif %}
+    <div class="chips">{% for c in opts.plain %}<label class="chk"><input type="checkbox" class="target-select" name="target_{{ kind }}" value="{{ c }}"
+      {% if chosen and c in chosen or not sc.targets and c == sc.target and sc.task_type == kind %}checked{% endif %}><code>{{ c }}</code></label>{% endfor %}</div>
+    {% if opts.qi %}<div class="chips"><span class="hint">Quasi-identifiers (not recommended: the tool may generalise them):</span>
+      {% for c in opts.qi %}<label class="chk"><input type="checkbox" class="target-select" name="target_{{ kind }}" value="{{ c }}"
+        {% if chosen and c in chosen %}checked{% endif %}><code>{{ c }}</code> ⚠</label>{% endfor %}</div>{% endif %}
+    {% endwith %}
+    <div class="hint">At least one is required for this purpose. Direct identifiers are not offered.</div></div>
+  {% endfor %}
+  <div class="field"><label>Columns that matter most <span class="hint">(optional; their utility weighs × 3)</span></label>
+    <div class="chips">{% for p in all_cols %}<label class="chk"><input type="checkbox" name="key_columns" value="{{ p.name }}" {% if p.name in sc.key_columns %}checked{% endif %}><code>{{ p.name }}</code></label>{% endfor %}</div>
   </div>
 </div>
+
+<div class="card">
+  <h2>{% if kit_options %}4. {% endif %}Threat model: known attributes</h2>
+  <p>Who receives the data and what they may already know about people in it. The tool generalises the data until
+    these known attributes can no longer single anyone out.</p>
+  <p class="hint">Ticks follow the recipient (all quasi-identifiers; the internal team also knows insider columns); you can change them.
+    Columns that follow from these (e.g. city from postcode) are added automatically.</p>
+  {% for c in groups.known_options %}<label class="chk"><input type="checkbox" name="attacker_qis" value="{{ c.name }}"
+      data-qi="{{ c.qi|yesno:'1,0' }}" data-insider="{{ c.insider|yesno:'1,0' }}" {% if c.name in sc.attacker_qis %}checked{% endif %}>
+    <code>{{ c.name }}</code> <span class="gate {% if c.qi %}yellow{% else %}green{% endif %}" style="font-size:10px">{{ c.role }}</span>
+    {% if c.insider %}<span class="tag insider">insider knowledge</span>{% endif %}</label><br>{% endfor %}
+</div>
+</fieldset>
+
+<details class="card" id="advanced">
+  <summary><b>{% if kit_options %}5. {% endif %}Advanced settings</b> <span class="hint">seed, thresholds, per-column utility limits</span></summary>
+  <div class="row" style="margin-top:10px">
+    <div class="field"><label>Max re-identification rate (%)</label>
+      <input type="number" step="0.1" min="0" max="100" name="max_linkage" id="max_linkage" value="{{ sc.max_linkage|mul100 }}">
+      <div class="hint">empty = recipient default</div></div>
+    <div class="field"><label>Minimum k</label>
+      <input type="number" min="1" max="100" name="min_k" id="min_k" value="{{ sc.min_k|default_if_none:'' }}">
+      <div class="hint">empty = recipient default</div></div>
+    <div class="field"><label>Random seed</label><input type="number" name="seed" value="{{ sc.seed|default:42 }}"></div>
+  </div>
+  {% if cap_cols %}<div class="field"><label>Per-column utility limits <span class="hint">(coarsest level the search may use)</span></label>
+    <table>{% for c in cap_cols %}<tr><td><code>{{ c.name }}</code></td><td>
+      <select name="cap__{{ c.name }}"><option value="">no limit</option>
+        {% for i, lab in c.levels %}<option value="{{ i }}" {% if c.current == i|stringformat:"d" %}selected{% endif %}>{{ lab }}</option>{% endfor %}
+      </select></td></tr>{% endfor %}</table>
+    <div class="hint">E.g. keep arrival times at "week" for weekly trends. Limits can make the risk target unreachable; the report then says so.</div>
+  </div>{% endif %}
+</details>
+</div>
+
+<div class="summary-bar" id="summary" hx-post="{% url 'scenario_summary' job.id %}" hx-trigger="load, change from:#scenario-form delay:150ms, input from:#scenario-form delay:400ms"
+     hx-include="#scenario-form" hx-target="this" hx-swap="innerHTML"><span class="hint">Computing…</span></div>
+
 <div class="actions">
   <a class="btn secondary" href="{% url 'profile' job.id %}">← Back</a>
   <button class="btn" type="submit">Run protection →</button>
@@ -90,16 +119,60 @@
 {% block scripts %}
 <script>
 const REC = {{ recipients_json|safe }};
-document.getElementById('recipient').addEventListener('change', e => {
-  const r = REC[e.target.value];
+const PRESETS = {{ presets_json|safe }};
+const recipient = document.getElementById('recipient');
+const note = document.getElementById('recipient-note');
+function applyRecipient(announce) {
+  const key = recipient.value, r = REC[key], preset = new Set(PRESETS[key]);
+  document.querySelectorAll('.target-select:checked').forEach(t => preset.delete(t.value));   // targets are never known attributes
   document.getElementById('max_linkage').placeholder = (r.max_linkage * 100) + ' (default)';
   document.getElementById('min_k').placeholder = r.min_k + ' (default)';
-});
-document.getElementById('recipient').dispatchEvent(new Event('change'));
+  if (!announce) return;
+  let added = [], removed = [];
+  document.querySelectorAll('input[name=attacker_qis]').forEach(cb => {
+    const want = preset.has(cb.value);
+    if (want && !cb.checked) added.push(cb.value);
+    if (!want && cb.checked && cb.dataset.insider === '1') removed.push(cb.value);
+    if (cb.dataset.qi === '1' || cb.dataset.insider === '1') cb.checked = want;
+  });
+  let msg = `${r.label}: target ≤ ${r.max_linkage * 100} %, k ≥ ${r.min_k}.`;
+  if (added.length) msg += ` Now also known: ${added.join(', ')}.`;
+  if (removed.length) msg += ` No longer assumed known: ${removed.join(', ')}.`;
+  note.textContent = msg;
+}
+recipient.addEventListener('change', () => applyRecipient(true));
+applyRecipient(false);
+
+function applyPurpose() {
+  const on = new Set([...document.querySelectorAll('input[name=purposes]:checked')].map(c => c.value));
+  document.querySelectorAll('.target-field').forEach(f => f.hidden = !on.has(f.dataset.purpose));
+}
+document.querySelectorAll('input[name=purposes]').forEach(r => r.addEventListener('change', applyPurpose));
+applyPurpose();
+
+const KIT = {{ kit_presets_json|safe }};
 const ks = document.getElementById('kit_scenario');
 if (ks) {
   const show = () => document.querySelectorAll('.kit-tasks').forEach(d => d.hidden = d.dataset.kit !== ks.value);
-  ks.addEventListener('change', show); show();
+  const fill = () => {   // the kit scenario is a preset: it fills the editable fields below
+    const p = KIT[ks.value];
+    if (!p) return;
+    recipient.value = p.recipient;
+    applyRecipient(false);
+    const known = new Set(p.known);
+    document.querySelectorAll('input[name=attacker_qis]').forEach(cb => cb.checked = known.has(cb.value));
+    const purposes = new Set(p.purposes);
+    document.querySelectorAll('input[name=purposes]').forEach(cb => cb.checked = purposes.has(cb.value));
+    document.querySelectorAll('.target-select').forEach(cb => {
+      const kind = cb.name.replace('target_', '');
+      cb.checked = (p.targets[kind] || []).includes(cb.value);
+    });
+    document.querySelector('textarea[name=description]').value = p.description;
+    note.textContent = `Filled in from ${ks.value}; you can change anything below.`;
+    applyPurpose();
+  };
+  ks.addEventListener('change', () => { show(); fill(); });
+  show();
 }
 </script>
 {% endblock %}

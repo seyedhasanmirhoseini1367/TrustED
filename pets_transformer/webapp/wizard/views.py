@@ -26,7 +26,7 @@ from engine.text_pii import load_gold
 from .models import Job
 
 QI_ROLES = (Role.QUASI_ID.value, Role.DATE.value, Role.LOCATION.value)
-TARGET_HINT = re.compile(r"readmit|target|label|outcome|churn|fraud|default|class|y$", re.I)
+TARGET_HINT = re.compile(r"readmit|target|label|outcome|churn|fraud|default|^class$|^y$", re.I)
 STEPS = ["Upload", "Profile", "Scenario", "Results", "Export"]
 
 
@@ -50,7 +50,7 @@ def _read_json(job: Job, name: str):
 
 # ---------------------------------------------------------------- step 1: upload
 def home(request):
-    return render(request, "wizard/home.html", _ctx(None, 1, jobs=Job.objects.all()[:8], error=request.GET.get("error")))
+    return render(request, "wizard/home.html", _ctx(None, 1, jobs=Job.objects.filter(project__isnull=True)[:8], error=request.GET.get("error")))
 
 
 @require_POST
@@ -66,46 +66,21 @@ def upload(request):
         shutil.copy(spans, job.folder / "spans.json")
         job.has_gold = True
     else:
-        f = request.FILES.get("data")
-        if f is None:
+        files = [f for f in request.FILES.getlist("data") if f]
+        if not files:
             return redirect("/?error=Choose a CSV or XLSX file, or load the sample dataset.")
-        job = Job.objects.create(name=f.name[:200])
-        raw = job.folder / ("upload.xlsx" if f.name.lower().endswith((".xlsx", ".xls")) else "upload.csv")
-        with open(raw, "wb") as out:
-            for chunk in f.chunks():
-                out.write(chunk)
-        try:
-            df = load_table(raw)
-        except Exception as exc:  # noqa: BLE001 - shown to the user
-            job.delete()
-            return redirect(f"/?error=Could not read the file: {exc}")
-        raw.unlink()
-        if df.empty or df.shape[1] == 0:
-            shutil.rmtree(job.folder, ignore_errors=True)
-            job.delete()
-            return redirect("/?error=The file has no rows or no columns.")
-        keep = None
-        if len(df) > settings.MAX_ROWS:
-            # large tables: a reproducible random sample of MAX_ROWS rows (row order preserved)
-            total = len(df)
-            keep = df.sample(n=settings.MAX_ROWS, random_state=42).index.sort_values()
-            df = df.loc[keep].reset_index(drop=True)
-            job.note = (f"The file has {total:,} rows; a reproducible random sample of {settings.MAX_ROWS:,} rows "
-                        f"(seed 42) is used. Protection and metrics apply to this sample.")
-        df.to_csv(job.folder / "original.csv", index=False)
-        g = request.FILES.get("spans")
-        if g is not None:
-            try:
-                gold = json.loads(g.read().decode("utf-8"))
-                if keep is not None:  # re-number ground-truth rows to the sampled table
-                    pos = {int(old): new for new, old in enumerate(keep)}
-                    recs = gold["records"] if isinstance(gold, dict) else gold
-                    recs = [dict(r, row=pos[int(r["row"])]) for r in recs if int(r["row"]) in pos]
-                    gold = dict(gold, records=recs) if isinstance(gold, dict) else recs
-                (job.folder / "spans.json").write_text(json.dumps(gold, ensure_ascii=False), encoding="utf-8")
-                job.has_gold = True
-            except (ValueError, KeyError, TypeError):
-                job.note = (job.note + " " if job.note else "") + "The ground-truth spans file could not be read and was ignored."
+        if len(files) > 1:   # several related tables: one project
+            from .project_views import create_project
+            return create_project(request, files)
+        job, err = table_job_from_upload(files[0], request.FILES.get("spans"))
+        if err:
+            return redirect(f"/?error={err}")
+        return redirect("data", job_id=job.id)
+    finish_profile(job)
+    return redirect("data", job_id=job.id)
+
+
+def finish_profile(job: Job) -> None:
     df = load_table(job.folder / "original.csv")
     profiles = assign_gates(profile_dataframe(df), df, Scenario())
     job.n_rows, job.n_cols = len(df), df.shape[1]
@@ -113,7 +88,49 @@ def upload(request):
     job.profile = [p.to_dict() for p in profiles]
     job.status = "profiled"
     job.save()
-    return redirect("data", job_id=job.id)
+
+
+def table_job_from_upload(f, spans=None, project: Job | None = None) -> tuple[Job | None, str | None]:
+    """Store one uploaded table as a job (sampled to MAX_ROWS rows if larger) and profile it."""
+    job = Job.objects.create(name=f.name[:200], project=project)
+    raw = job.folder / ("upload.xlsx" if f.name.lower().endswith((".xlsx", ".xls")) else "upload.csv")
+    with open(raw, "wb") as out:
+        for chunk in f.chunks():
+            out.write(chunk)
+    try:
+        df = load_table(raw)
+    except Exception as exc:  # noqa: BLE001 - shown to the user
+        shutil.rmtree(job.folder, ignore_errors=True)
+        job.delete()
+        return None, f"Could not read {f.name}: {exc}"
+    raw.unlink()
+    if df.empty or df.shape[1] == 0:
+        shutil.rmtree(job.folder, ignore_errors=True)
+        job.delete()
+        return None, f"{f.name} has no rows or no columns."
+    keep = None
+    if len(df) > settings.MAX_ROWS:
+        # large tables: a reproducible random sample of MAX_ROWS rows (row order preserved)
+        total = len(df)
+        keep = df.sample(n=settings.MAX_ROWS, random_state=42).index.sort_values()
+        df = df.loc[keep].reset_index(drop=True)
+        job.note = (f"The file has {total:,} rows; a reproducible random sample of {settings.MAX_ROWS:,} rows "
+                    f"(seed 42) is used. Protection and metrics apply to this sample.")
+    df.to_csv(job.folder / "original.csv", index=False)
+    if spans is not None:
+        try:
+            gold = json.loads(spans.read().decode("utf-8"))
+            if keep is not None:  # re-number ground-truth rows to the sampled table
+                pos = {int(old): new for new, old in enumerate(keep)}
+                recs = gold["records"] if isinstance(gold, dict) else gold
+                recs = [dict(r, row=pos[int(r["row"])]) for r in recs if int(r["row"]) in pos]
+                gold = dict(gold, records=recs) if isinstance(gold, dict) else recs
+            (job.folder / "spans.json").write_text(json.dumps(gold, ensure_ascii=False), encoding="utf-8")
+            job.has_gold = True
+        except (ValueError, KeyError, TypeError):
+            job.note = (job.note + " " if job.note else "") + "The ground-truth spans file could not be read and was ignored."
+    finish_profile(job)
+    return job, None
 
 
 def data(request, job_id):
@@ -196,17 +213,138 @@ def llm_suggest(request, job_id, col):
 
 
 # ---------------------------------------------------------------- step 3: scenario
+PREDICTION = ("classification", "regression")
+PURPOSES = [
+    ("classification", "Train a prediction model: categories", "e.g. fraud yes/no. Measured by ROC-AUC, F1"),
+    ("regression", "Train a prediction model: numbers", "e.g. spending amount. Measured by R², MAE"),
+    ("descriptive", "Statistical analysis", "Averages, rates, group comparisons"),
+    ("visualization", "Charts and dashboards", "Trends and distributions"),
+]
+_DF_CACHE: dict = {}
+
+
+def _original(job: Job) -> pd.DataFrame:
+    """Original table, cached per job file (the live summary reads it on every form change)."""
+    path = job.folder / "original.csv"
+    key = (str(job.id), path.stat().st_mtime)
+    if key not in _DF_CACHE:
+        _DF_CACHE.clear()
+        _DF_CACHE[key] = load_table(path)
+    return _DF_CACHE[key]
+
+
+MAX_CATEGORIES = 50       # a categories target: text-like columns with at most this many values ...
+MAX_NUMERIC_CLASSES = 10  # ... or numbers with at most this many values (flags, small counts); more -> numbers target
+
+
+def _distinct(p: dict, n_rows: int) -> int:
+    """Number of different values, from the profile (unique ratio is measured on non-missing values)."""
+    return int(round(p.get("unique_ratio", 0) * n_rows * (1 - p.get("missing_ratio", 0))))
+
+
+def target_kind_ok(p: dict, kind: str, n_rows: int) -> bool:
+    """Which prediction purpose a column can be the target of."""
+    n = _distinct(p, n_rows)
+    numeric = p.get("dtype") == "numeric"
+    if p.get("kind") in ("date", "id", "text"):
+        return False
+    if kind == "classification":
+        return 2 <= n and ((not numeric and n <= MAX_CATEGORIES) or (numeric and n <= MAX_NUMERIC_CLASSES))
+    # numbers: measurements only; digit codes such as postcodes are not quantities
+    return numeric and n > MAX_NUMERIC_CLASSES and p.get("kind") == "numeric"
+
+
+def _column_groups(profs: list[dict], n_rows: int = 0) -> dict:
+    """Known-attribute candidates and target options for the scenario form."""
+    usable = [p for p in profs if p["gate"] != "red" and p["role"] != "FREE_TEXT"]
+    qis = [p["name"] for p in usable if p["role"] in QI_ROLES]
+    insider = [p["name"] for p in usable if p["role"] in ("SENSITIVE", "CATEGORICAL") and p["name"] not in qis]
+    targets = [p for p in usable if p["role"] not in ("DIRECT_ID", "TECHNICAL_ID")]
+    by_kind = {}
+    for kind in ("classification", "regression"):
+        ok = [p["name"] for p in targets if target_kind_ok(p, kind, n_rows)]
+        by_kind[kind] = {"plain": [c for c in ok if c not in qis], "qi": [c for c in ok if c in qis]}
+    return {"qis": qis, "insider": insider, "target_by_kind": by_kind,
+            "target_plain": by_kind["classification"]["plain"] + by_kind["regression"]["plain"],
+            "target_qi": by_kind["classification"]["qi"] + by_kind["regression"]["qi"],
+            "known_options": [{"name": p["name"], "role": p["role"], "qi": p["name"] in qis,
+                               "insider": p["name"] in insider} for p in usable]}
+
+
+def known_preset(recipient: str, groups: dict) -> list[str]:
+    """Public release and research partner: every quasi-identifier. Internal team: plus columns an insider may know."""
+    return groups["qis"] + (groups["insider"] if recipient == "internal" else [])
+
+
 def _default_scenario(job: Job) -> dict:
     profs = job.profile
-    qis = [p["name"] for p in profs if p["role"] in QI_ROLES and p["gate"] == "yellow"]
-    target = next((p["name"] for p in profs if TARGET_HINT.search(p["name"]) and p["role"] not in ("DIRECT_ID",)), None)
+    groups = _column_groups(profs, job.n_rows)
+    target = next((n for n in groups["target_by_kind"]["classification"]["plain"] if TARGET_HINT.search(n)), None)
     desc = ""
     if job.has_gold and job.name.startswith("Sample"):
-        qis = [c for c in ("date_of_birth", "gender", "postcode", "admission_date") if c in qis] or qis
         desc = ("A hospital shares admissions data with an external research partner to build a 30-day readmission "
                 "model. Threat model: age/DOB, gender, postcode and admission date may already be known.")
-    return {"recipient": "partner", "attacker_qis": qis, "task_type": "classification" if target else "descriptive",
-            "target": target, "key_columns": [], "max_linkage": None, "min_k": None, "description": desc, "seed": 42}
+    return {"recipient": "partner", "attacker_qis": [c for c in known_preset("partner", groups) if c != target],
+            "task_type": "classification" if target else "descriptive", "target": target, "key_columns": [],
+            "purposes": ["classification"] if target else ["descriptive"],
+            "targets": {"classification": [target]} if target else {},
+            "max_linkage": None, "min_k": None, "description": desc, "seed": 42}
+
+
+def _form_scenario(post, job: Job) -> tuple[Scenario, list[str]]:
+    """Scenario from the posted form (kit scenario or manual), plus blocking problems for the live summary."""
+    problems = []
+    seed = int(post.get("seed") or 42)
+    caps = {k[len("cap__"):]: v for k, v in post.items() if k.startswith("cap__") and v != ""}
+    kit_id = post.get("kit_scenario") or ""
+    base = None
+    if kit_id:   # official scenario: contributes its tasks, per-task utility limits and pseudonym requirements
+        base = kit.scenario_from_kit(kit_id, [p["name"] for p in job.profile], post.getlist(f"kit_tasks__{kit_id}"),
+                                     seed=seed)
+    max_link = (post.get("max_linkage") or "").strip()
+    min_k = (post.get("min_k") or "").strip()
+    # several purposes may be ticked; older clients send a single task_type + target
+    purposes = post.getlist("purposes") or [post.get("task_type", "descriptive")]
+    known = post.getlist("attacker_qis")
+    if not purposes:
+        problems.append("Tick at least one purpose.")
+    targets = {}
+    allowed = _column_groups(job.profile, job.n_rows)["target_by_kind"]
+    for t in purposes:
+        if t in PREDICTION:
+            chosen = [c for c in post.getlist(f"target_{t}") if c] or ([post.get("target")] if post.get("target") else [])
+            label = dict((v, lab) for v, lab, _ in PURPOSES)[t]
+            if not chosen:
+                problems.append(f"Choose at least one target column for '{label}'.")
+                continue
+            if len(chosen) > 5:
+                problems.append(f"At most 5 target columns for '{label}' (one model is trained per target).")
+            fits = set(allowed[t]["plain"]) | set(allowed[t]["qi"])
+            wrong = [c for c in chosen if c not in fits]
+            if wrong:
+                what = "a column with a few categories" if t == "classification" else "a numeric column with many values"
+                problems.append(f"'{', '.join(wrong)}' cannot be a target for '{label}': choose {what}.")
+            for tgt in chosen:
+                if tgt in known:
+                    problems.append(f"The target '{tgt}' is also ticked as a known attribute. Untick it under "
+                                    "'Threat model: known attributes' or choose another target.")
+            targets[t] = chosen
+    extra = {}
+    if base is not None:
+        extra = {"kit_scenario": base.kit_scenario, "kit_tasks": base.kit_tasks, "sacrificed_tasks": base.sacrificed_tasks,
+                 "pseudonymise": base.pseudonymise}
+        caps = {**base.max_levels, **caps}   # your Advanced-settings limits override the kit's per-task limits
+    scen = Scenario.from_dict({
+        **extra,
+        "recipient": post.get("recipient", "partner"), "attacker_qis": known,
+        "purposes": purposes or ["descriptive"], "targets": targets,
+        "task_type": (purposes or ["descriptive"])[0], "target": None,
+        "key_columns": post.getlist("key_columns"),
+        "max_linkage": float(max_link) / 100 if max_link else None,
+        "min_k": int(min_k) if min_k else None,
+        "description": (post.get("description", "") or (base.description if base else ""))[:2000], "seed": seed,
+        "max_levels": caps})
+    return scen, problems
 
 
 def scenario(request, job_id):
@@ -215,31 +353,9 @@ def scenario(request, job_id):
     error = None
     if request.method == "POST":
         try:
-            max_link = request.POST.get("max_linkage", "").strip()
-            min_k = request.POST.get("min_k", "").strip()
-            target = request.POST.get("target") or None
-            task = request.POST.get("task_type", "descriptive")
-            if task in ("classification", "regression") and not target:
-                raise ValueError("Choose a target column for a classification or regression task.")
-            sc = {
-                "recipient": request.POST.get("recipient", "partner"),
-                "attacker_qis": request.POST.getlist("attacker_qis"),
-                "task_type": task, "target": target,
-                "key_columns": request.POST.getlist("key_columns"),
-                "max_linkage": float(max_link) / 100 if max_link else None,
-                "min_k": int(min_k) if min_k else None,
-                "description": request.POST.get("description", "")[:2000],
-                "seed": int(request.POST.get("seed") or 42),
-            }
-            caps = {k[len("cap__"):]: v for k, v in request.POST.items() if k.startswith("cap__") and v != ""}
-            sc["max_levels"] = caps
-            kit_id = request.POST.get("kit_scenario") or ""
-            if kit_id:
-                cols = [p["name"] for p in job.profile]
-                scen = kit.scenario_from_kit(kit_id, cols, request.POST.getlist(f"kit_tasks__{kit_id}"), seed=sc["seed"])
-                scen.max_levels = {**scen.max_levels, **caps}
-            else:
-                scen = Scenario.from_dict(sc)
+            scen, problems = _form_scenario(request.POST, job)
+            if problems:
+                raise ValueError(" ".join(problems))
             job.scenario = scen.to_dict()
             _run_job(job, scen)
             if request.headers.get("HX-Request"):
@@ -252,6 +368,8 @@ def scenario(request, job_id):
             job.save(update_fields=["status", "error"])
             error = str(exc)
     profs = job.profile
+    cols = [p["name"] for p in profs]
+    groups = _column_groups(profs, job.n_rows)
     cap_cols = []
     for p in profs:
         if p["gate"] == "yellow" and p["role"] != "FREE_TEXT" and p.get("ladder"):
@@ -259,14 +377,61 @@ def scenario(request, job_id):
             if lad is not None:
                 cur = (sc.get("max_levels") or {}).get(p["name"], "")
                 cap_cols.append({"name": p["name"], "levels": list(enumerate(lad.level_names))[1:], "current": str(cur)})
-    kit_options = kit.scenarios_for([p["name"] for p in profs])
+    kit_options = kit.scenarios_for(cols)
+    kit_presets = {}
+    for s_ in kit_options:   # what the kit scenario fills in (all of it stays editable)
+        ks = kit.scenario_from_kit(s_["id"], cols)
+        s_["known"] = ks.attacker_qis
+        s_["caps"] = ks.max_levels
+        kit_presets[s_["id"]] = {"recipient": ks.recipient, "known": ks.attacker_qis, "purposes": ks.purposes,
+                                 "targets": ks.targets, "description": ks.description}
+    selected_kit = sc.get("kit_scenario") if job.scenario else (kit_options[0]["id"] if kit_options else None)
+    if not job.scenario and selected_kit:
+        p_ = kit_presets[selected_kit]
+        sc = {**sc, "kit_scenario": selected_kit, "recipient": p_["recipient"], "attacker_qis": p_["known"],
+              "purposes": p_["purposes"], "targets": p_["targets"], "description": p_["description"]}
+    presets = {r: known_preset(r, groups) for r in RECIPIENTS}
     ctx = _ctx(job, 3, sc=sc, error=error, recipients=RECIPIENTS, cap_cols=cap_cols, kit_options=kit_options,
-               qi_cols=[p for p in profs if p["gate"] != "red" and p["role"] != "FREE_TEXT"],
+               selected_kit=selected_kit, groups=groups, purposes=PURPOSES,
+               target_kinds=[("classification", "Train a prediction model: categories",
+                              "columns with a few categories (yes/no, classes)", groups["target_by_kind"]["classification"]),
+                             ("regression", "Train a prediction model: numbers",
+                              "numeric columns with many values", groups["target_by_kind"]["regression"])],
                all_cols=[p for p in profs if p["gate"] != "red" and p["role"] not in ("FREE_TEXT",)],
-               recipients_json=json.dumps(RECIPIENTS))
+               recipients_json=json.dumps(RECIPIENTS), presets_json=json.dumps(presets),
+               kit_presets_json=json.dumps(kit_presets),
+               insider_json=json.dumps(groups["insider"]))
     if error and request.headers.get("HX-Request"):
         return render(request, "wizard/partials/error.html", {"error": error})
     return render(request, "wizard/scenario.html", ctx)
+
+
+@require_POST
+def scenario_summary(request, job_id):
+    """Live summary under the scenario form: computed on the ORIGINAL data only (no search, fast)."""
+    from engine.risk import class_sizes
+    job = get_object_or_404(Job, id=job_id)
+    try:
+        scen, problems = _form_scenario(request.POST, job)
+    except Exception as exc:  # noqa: BLE001 - shown to the user
+        return render(request, "wizard/partials/summary.html", {"problems": [str(exc)]})
+    df = _original(job)
+    known = [c for c in scen.attacker_qis if c in df.columns]
+    unique = float((class_sizes(df[known], known) == 1).mean()) if known else 0.0
+    parts = []
+    for t in scen.purposes:
+        if t == "classification":
+            parts.append(f"ROC-AUC and F1 predicting {', '.join(scen.targets.get(t, [])) or '(choose a target)'}")
+        elif t == "regression":
+            parts.append(f"R² and MAE predicting {', '.join(scen.targets.get(t, [])) or '(choose a target)'}")
+        elif t == "descriptive":
+            parts.append("error of averages, rates and group counts")
+        else:
+            parts.append("similarity of distributions and trends")
+    metric = "; ".join(parts) + (" (score = mean over these purposes)" if len(parts) > 1 else "")
+    return render(request, "wizard/partials/summary.html", {
+        "n_known": len(known), "unique": unique, "target_rate": scen.max_linkage, "min_k": scen.min_k,
+        "metric": metric, "problems": problems, "kit": scen.kit_scenario})
 
 
 def _run_job(job: Job, scen: Scenario) -> None:
@@ -276,13 +441,17 @@ def _run_job(job: Job, scen: Scenario) -> None:
         gold_col, gold = load_gold(json.loads((job.folder / "spans.json").read_text(encoding="utf-8")))
     t = time.time()
     res = run(df, scen, profiles=_profiles(job), gold=gold, gold_column=gold_col)
+    save_result(job, res, round(time.time() - t, 1))
+
+
+def save_result(job: Job, res, runtime: float) -> None:
     res.export_table().to_csv(job.folder / "protected.csv", index=False)
     res.rowmap.to_csv(job.folder / "rowmap.csv", index=False)
     (job.folder / "report.json").write_text(to_json(res.report), encoding="utf-8")
     (job.folder / "preview.json").write_text(json.dumps(res.preview, ensure_ascii=False), encoding="utf-8")
     (job.folder / "text_examples.json").write_text(json.dumps(res.text_examples, ensure_ascii=False), encoding="utf-8")
     (job.folder / "plain.txt").unlink(missing_ok=True)
-    job.status, job.error, job.runtime = "done", "", round(time.time() - t, 1)
+    job.status, job.error, job.runtime = "done", "", runtime
     job.save()
 
 
@@ -303,6 +472,7 @@ def results(request, job_id):
                  for p in path if p.get("task_retained") is not None],
         "final": final,
         "target_x": 1 - report["scenario"]["max_linkage"],
+        "target_met": bool(report["target_met"]),
     }
     pcols = preview["protected_columns"]
     prev_rows = []
@@ -317,11 +487,35 @@ def results(request, job_id):
     sens_cols = [p["name"] for p in sorted(cand, key=lambda p: (p["unique_ratio"] > 0.01, p["unique_ratio"]))]
     num_cols = [p["name"] for p in report["profiles"] if p["dtype"] == "numeric" and p["gate"] != "red"]
     plain = (job.folder / "plain.txt").read_text(encoding="utf-8") if (job.folder / "plain.txt").exists() else None
-    ctx = _ctx(job, 4, r=report, kpis=kpis(report), chart=chart, preview_cols=preview["columns"], pcols=pcols,
+    ctx = _ctx(job, 4, r=report, kpis=kpis(report), chart=chart, constraints=_constraints(report), preview_cols=preview["columns"], pcols=pcols,
                preview_rows=prev_rows, examples=examples[:6], group_cols=sens_cols, num_cols=num_cols, plain=plain,
                k_dist_before=report["metrics"]["before"]["k_distribution"],
                k_dist_after=report["metrics"]["after"]["k_distribution"])
     return render(request, "wizard/results.html", ctx)
+
+
+def _constraints(report: dict) -> list[dict]:
+    """Per column: which utility limit, privacy floor, task requirement or user override bounded its level."""
+    out = []
+    decisions = {d["column"]: d for d in report["decisions"]}
+    for u in report.get("utility_requirements") or []:
+        d = decisions.get(u["column"], {})
+        if "max_level" in u:
+            out.append({"column": u["column"], "kind": "utility limit", "detail": f"at most '{u['max_level']}'",
+                        "binding": u["max_level"] in str(d.get("level", ""))})
+    for p in report["profiles"]:
+        d = decisions.get(p["name"], {})
+        if p.get("min_level", 0) > 0 and p.get("gate") == "yellow":
+            out.append({"column": p["name"], "kind": "privacy floor", "detail": p.get("gate_reason", ""),
+                        "binding": d.get("level_index") == p["min_level"]})
+        if p.get("overridden"):
+            out.append({"column": p["name"], "kind": "your override in Step 2",
+                        "detail": f"role {p['role']}, gate {p['gate']}" + (f", {p['red_action']}" if p.get("red_action") else ""),
+                        "binding": True})
+    for c in report["scenario"].get("pseudonymise") or []:
+        out.append({"column": c, "kind": "task requirement", "detail": "kept linkable as a keyed pseudonym (not dropped)",
+                    "binding": True})
+    return out
 
 
 def _segments(text: str, entities: list[dict]) -> list[tuple[str, str | None]]:

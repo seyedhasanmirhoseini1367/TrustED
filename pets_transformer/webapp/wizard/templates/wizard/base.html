@@ -16,6 +16,17 @@
   <span class="pill">LLM {% if llm_enabled %}on{% else %}off{% endif %}</span>
 </div></header>
 <main class="wrap">
+  {% if job.kind == 'project' %}
+  <nav class="progress">
+    <a class="s {% if step == 1 %}cur{% else %}done{% endif %}" href="{% url 'project' job.id %}"><span>1</span>Tables &amp; links</a>
+    <span class="s {% if step == 2 %}cur{% endif %}"><span>2</span>Profiles (per table)</span>
+    <a class="s {% if step == 3 %}cur{% elif step > 3 %}done{% endif %}" href="{% url 'project_scenario' job.id %}"><span>3</span>Scenario</a>
+    {% if job.status == 'done' %}<a class="s {% if step == 4 %}cur{% else %}done{% endif %}" href="{% url 'project_results' job.id %}"><span>4</span>Results &amp; export</a>
+    {% else %}<span class="s"><span>4</span>Results &amp; export</span>{% endif %}
+  </nav>
+  {% else %}
+  {% if job.project %}<div class="banner" style="margin-top:14px">Part of <a href="{% url 'project' job.project.id %}">{{ job.project.name }}</a> —
+    the project's scenario page protects all its tables together.</div>{% endif %}
   <nav class="progress">
     {% for s in steps %}{% with i=forloop.counter %}
       {% if i == step %}<span class="s cur"><span>{{ i }}</span>{{ s }}</span>
@@ -27,6 +38,7 @@
       {% else %}<span class="s"><span>{{ i }}</span>{{ s }}</span>{% endif %}
     {% endwith %}{% endfor %}
   </nav>
+  {% endif %}
   {% block content %}{% endblock %}
 </main>
 <footer>Inspired by the European project TrustED (Horizon Europe GA No. 101168467) · Use only synthetic or approved data ·

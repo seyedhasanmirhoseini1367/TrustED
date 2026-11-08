@@ -1,0 +1,39 @@
+{% extends "wizard/base.html" %}
+{% load pets %}
+{% block content %}
+<h1>Results — {{ tables|length }} tables protected together</h1>
+<p class="sub">Processing order (parents first): {% for t in tables %}<code>{{ t.table }}</code>{% if not forloop.last %} → {% endif %}{% endfor %}
+ · {{ job.runtime }} s</p>
+
+<div class="card">
+  <h2>Per table</h2>
+  <div class="tbl"><table>
+    <tr><th>Table</th><th>Target</th><th>Re-identification rate</th><th>min k</th><th>Utility</th><th>Rows released</th><th>Joined view includes</th><th></th></tr>
+    {% for t in tables %}<tr><td class="mono"><b>{{ t.table }}</b></td>
+      <td>{% if t.target_met %}<span class="status ok">met</span>{% else %}<span class="status bad">NOT met</span>{% endif %}</td>
+      <td>{{ t.reid_before|pct }} → <b>{{ t.reid_after|pct }}</b></td><td>{{ t.min_k_after }}</td><td>{{ t.utility|num:3 }}</td>
+      <td>{{ t.rows_released }} of {{ t.rows }} ({{ t.suppressed|pct }} suppressed)</td>
+      <td>{% if t.joined_from %}attributes of {{ t.joined_from|joinlist }}{% else %}<span class="muted">—</span>{% endif %}</td>
+      <td>{% if t.job %}<a class="btn small secondary" href="{% url 'results' t.job.id %}">Details</a>{% endif %}</td></tr>{% endfor %}
+  </table></div>
+  <p class="hint">For a linked table the re-identification rate and k are measured on the joined view: its own known attributes plus
+    what its parent table releases.</p>
+</div>
+
+<div class="card">
+  <h2>Links after protection</h2>
+  {% if links %}<div class="tbl"><table><tr><th>Link</th><th>Kind</th><th>Still joinable</th></tr>
+    {% for l in links %}<tr><td class="mono">{{ l.child }}.{{ l.child_col }} → {{ l.parent }}.{{ l.parent_col }}</td><td>{{ l.kind }}</td>
+      <td><b>{{ l.integrity|pct }}</b> <span class="hint">{{ l.integrity_note }}</span></td></tr>{% endfor %}
+  </table></div>
+  <p class="hint">Link columns are released as keyed pseudonyms (one secret for all tables), so joins keep working; rows whose
+    parent was suppressed lose their partner.</p>
+  {% else %}<p class="hint">No links were used.</p>{% endif %}
+</div>
+
+<div class="card"><h2>Export</h2>
+  <p>One zip with every protected table (original file names), its row map (<b>for scoring only — never publish it</b>)
+    and its reports.</p>
+  <a class="btn" href="{% url 'project_download' job.id %}">Download all tables (.zip)</a></div>
+<div class="actions"><a class="btn secondary" href="{% url 'project_scenario' job.id %}">← Change scenario</a></div>
+{% endblock %}

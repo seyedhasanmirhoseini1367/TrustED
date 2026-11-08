@@ -19,6 +19,11 @@ class Job(models.Model):
     status = models.CharField(max_length=20, default="uploaded")  # uploaded | profiled | done | error
     error = models.TextField(blank=True, default="")
     note = models.TextField(blank=True, default="")
+    # several related tables uploaded together: a project job groups member table jobs
+    kind = models.CharField(max_length=10, default="table")          # table | project
+    project = models.ForeignKey("self", null=True, blank=True, on_delete=models.CASCADE, related_name="members")
+    links = models.JSONField(default=list, blank=True)                # detected / confirmed links between members
+    result = models.JSONField(default=dict, blank=True)               # project summary (order, links, per table)
     runtime = models.FloatField(null=True, blank=True)
 
     class Meta:

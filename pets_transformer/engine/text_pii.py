@@ -27,8 +27,8 @@ LABEL_ALIASES = {"ID": "NATIONAL_ID"}  # labels used by older ground-truth files
 ENTITY_MAP = {"PERSON": "PERSON", "LOCATION": "LOCATION", "ORGANIZATION": "ORG", "DATE_TIME": "DATE",
               "EMAIL_ADDRESS": "EMAIL", "IP_ADDRESS": "IP_ADDRESS", "CREDIT_CARD": "PAYMENT_CARD", "IBAN_CODE": "IBAN",
               "URL": "URL", "US_SSN": "NATIONAL_ID", "PHONE_NUMBER": "PHONE"}
-NER_ENTITIES = {"en": ["PERSON", "LOCATION", "ORGANIZATION", "DATE_TIME", "EMAIL_ADDRESS", "IP_ADDRESS", "CREDIT_CARD",
-                       "IBAN_CODE", "URL"],
+# Presidio is used for NER only: e-mails, IPs, cards, IBANs and URLs are covered (faster) by the regex layer below
+NER_ENTITIES = {"en": ["PERSON", "LOCATION", "ORGANIZATION", "DATE_TIME"],
                 "fi": ["PERSON", "LOCATION", "ORGANIZATION", "DATE_TIME"]}
 # pattern-validated labels win over NER guesses when spans overlap
 PRIORITY = {"NATIONAL_ID": 5, "EMAIL": 5, "IBAN": 5, "PAYMENT_CARD": 4, "URL": 4, "IP_ADDRESS": 4, "PROPERTY_ID": 4,
@@ -149,9 +149,11 @@ def plausible_ner(span_text: str, label: str, lowercase_text: bool) -> bool:
 def detect_language(text: str) -> str:
     words = [w.lower() for w in WORD.findall(text)[:60]]
     scores = {lang: sum(w in s for w in words) for lang, s in STOP.items()}
-    if re.search(r"[äö]", text) and scores["fi"] >= scores["sv"]:
+    if re.search(r"[äö]", text) and scores["fi"] > 0 and scores["fi"] >= scores["sv"]:   # names alone do not count
         scores["fi"] += 1
     best = max(scores, key=scores.get)
+    if scores["en"] == scores[best] and scores["en"] > 0:   # ties go to English, the default model
+        return "en"
     return best if scores[best] > 0 else "fi"
 
 
@@ -234,15 +236,13 @@ class Redactor:
         nlp_engine = NlpEngineProvider(nlp_configuration=conf).create_engine()
         langs = [m["lang_code"] for m in models]
         registry = RecognizerRegistry(supported_languages=langs)
-        if "en" in langs:
-            registry.load_predefined_recognizers(languages=["en"], nlp_engine=nlp_engine)
-        if "fi" in langs:
-            registry.add_recognizer(SpacyRecognizer(supported_language="fi",
+        for lang in langs:
+            registry.add_recognizer(SpacyRecognizer(supported_language=lang,
                                                     supported_entities=["PERSON", "LOCATION", "ORGANIZATION", "DATE_TIME"]))
-        for lang in langs:  # only NER is needed from spaCy; the other components cost time
+        for lang in langs:  # only NER is needed; in en_core_web_* and fi_core_news_* NER has its own embedding layer
             nlp = nlp_engine.nlp[lang]
-            for pipe in ("parser", "lemmatizer", "senter"):
-                if pipe in nlp.pipe_names:
+            for pipe in list(nlp.pipe_names):
+                if pipe != "ner":
                     nlp.disable_pipe(pipe)
         analyzer = AnalyzerEngine(nlp_engine=nlp_engine, registry=registry, supported_languages=langs)
         self._batch = BatchAnalyzerEngine(analyzer_engine=analyzer)

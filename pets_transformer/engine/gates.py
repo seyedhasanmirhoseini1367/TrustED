@@ -18,7 +18,7 @@ PROMOTION_PP = 0.02
 
 def assign_gates(profiles: list[ColumnProfile], df: pd.DataFrame, scenario: Scenario) -> list[ColumnProfile]:
     for p in profiles:
-        if scenario.target and p.name == scenario.target:
+        if p.name in scenario.all_targets or (scenario.target and p.name == scenario.target):
             p.role, p.gate, p.red_action, p.min_level = Role.TARGET, Gate.GREEN, None, 0
             p.gate_reason = "target of the analytical task; released unchanged"
             continue
@@ -148,7 +148,9 @@ def promote_green(df: pd.DataFrame, profiles: list[ColumnProfile], known: list[s
     for p in profiles:
         if p.gate != Gate.GREEN or p.overridden or p.role in (Role.TARGET,) or p.ladder is None:
             continue
-        if p.role not in (Role.NUMERIC, Role.CATEGORICAL, Role.OTHER, Role.SENSITIVE):
+        # measured values, sensitive attributes and many-valued columns (lab results, amounts) are not plausible
+        # background knowledge: only a column with few categories (department, test type) can be promoted
+        if p.role not in (Role.CATEGORICAL, Role.OTHER) or df[p.name].nunique(dropna=True) > 50:
             continue
         rate = linkage_attack(df.loc[att_ids], df, known + [p.name])["success_rate"]
         if rate - base > PROMOTION_PP:

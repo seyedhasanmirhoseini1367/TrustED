@@ -108,11 +108,15 @@ python manage.py runserver        # http://127.0.0.1:8000 → upload a file or "
    of 50,000 rows (seed 42)** and the page says so; protection and metrics then apply to that sample. Use the CLI
    for full kit tables (the kit's scorecard expects the full table).
 2. **Profile**: detected role per column, confidence, red/yellow/green gate and reason; override inline (HTMX).
-3. **Scenario**: an official kit scenario (for kit tables), or recipient (public ≤ 1 % / k ≥ 10, research partner
-   ≤ 5 % / k ≥ 5, internal ≤ 10 % / k ≥ 3), threat model (known attributes), purpose, target, key columns and
-   per-column limits. The step is titled "Scenario: threat model + tasks".
-4. **Results**: KPI cards, trade-off chart, decision table with numeric reasons, before/after preview, free-text
-   redaction with measured recall, residual risks, DP aggregate panel.
+3. **Scenario: threat model + tasks** — one column, top to bottom: the official kit scenario (preselected for kit
+   tables, with a read-only summary), who receives the data (public ≤ 1 % / k ≥ 10, research partner ≤ 5 % / k ≥ 5,
+   internal ≤ 10 % / k ≥ 3; changing it updates the known-attribute ticks — the internal team also knows insider
+   columns), the purpose (prediction model for categories or numbers, statistical analysis, charts) with its target,
+   the threat model's known attributes, and collapsed advanced settings (seed, thresholds, per-column limits).
+   A sticky bar shows, live and on the original data only, how many people the known attributes single out today.
+4. **Results**: KPI cards, trade-off chart (the final point is marked "target not met" when no step met it),
+   decision table with numeric reasons and the limits/overrides that constrained each column, before/after preview,
+   free-text redaction with measured recall, residual risks, DP aggregate panel.
 5. **Export**: protected CSV (original file name), row map (internal), JSON report, printable HTML report.
    Never the original or the secret.
 
@@ -127,8 +131,16 @@ python -m engine.cli dp data/sample/health_admissions.csv --group department --s
 ```
 
 On the sample (research partner; threat model: DOB, gender, postcode and admission date are known):
-re-identification rate 100 % → 0 % (our own exact-match re-identification test), min k 1 → 5, 0.7 % of rows suppressed, ROC-AUC 0.800 → 0.796
-(99.6 % retained), free-text recall 100 % on our own generated notes (see above), ~15 s.
+re-identification rate 100 % → 0 % (our own exact-match re-identification test), min k 1 → 5, 1.6 % of rows
+suppressed, ROC-AUC 0.800 → 0.794 and F1 0.56 → 0.54 (utility score 0.975), free-text recall 100 % on our own
+generated notes (see above), ~20 s (redaction time depends on machine load).
+
+**Utility score.** Prediction purposes: mean(min(1, ROC-AUC protected / original), min(1, F1 protected / original)),
+F1 at the threshold that flags the training prevalence (a rare class at the default 0.5 threshold makes F1 noise);
+regression: mean(min(1, R² ratio), min(1, MAE original / protected)). Descriptive purposes: aggregate queries on the
+original columns answered from the protected data (generalised counts spread uniformly over the original values they
+cover, means from midpoints) plus distributions against the original values (TVD over original categories,
+Wasserstein / sd on midpoints); a column that is not released scores 0.
 
 Environment: `PETS_SECRET` (pseudonymisation key; otherwise a local `.pets_secret` file is created and never
 exported), `PETS_LLM=1` + Anthropic credentials for the optional LLM features, `DJANGO_DEBUG=1` for debug pages
@@ -140,10 +152,10 @@ exported), `PETS_LLM=1` + Anthropic credentials for the optional LLM features, `
 |---|---|
 | `profiling.py` | Rule-based roles from values and names only (never the kit's catalog): regexes (email, phone, HETU with/without separator, IBAN, Luhn cards, IP, MAC, URL, hashes, coordinates, Finnish numbers/dates) → name keywords → type/cardinality → codes → sensitive keywords |
 | `gates.py` | Red (drop / HMAC pseudonym / IP truncation), yellow (search space), green (unchanged; promoted if it raises the re-identification rate > 2 pp). Derived known attributes (city follows from postcode); linked columns share one level |
-| `ladders.py` | Deterministic levels: date (week → month → year), timestamp (hour → day → …), birth date (month → year → age bands, released as `age`), age bins, numeric, coordinates, postcode masking, rare-category merging, ICD-10 hierarchy |
+| `ladders.py` | Deterministic levels: date (week → month → year), timestamp (hour → day → …), birth date (month → year → age bands, released as `age`), age bins, numeric, coordinates, postcode masking, categories (rare → Other, top 20 / top 5 + Other, `*`), ICD-10 hierarchy; every quasi-identifier can be dropped as its last level |
 | `risk.py` | Uniqueness, k-anonymity, prosecutor risk, l-diversity, re-identification test (exact, or tolerant: age ± years and time windows) |
 | `search.py` | Greedy search with utility caps; skips no-op levels; suppression move capped at 5 % of rows |
-| `utility.py` | Proxy inside the loop; RandomForest task utility (split on the original data before transformation); aggregate-query error, TVD, Wasserstein |
+| `utility.py` | Proxy inside the loop; RandomForest task utility (split on the original data before transformation; all metrics combined); descriptive fidelity against the original values |
 | `text_pii.py` | Presidio + spaCy (English and Finnish) + Finnish/English regexes + dataset dictionaries → typed placeholders; kit span labels; precision/recall/F2 vs. ground truth |
 | `dp.py` | Laplace counts and clipped means, error vs. ε |
 | `kit.py` | Starter-kit scenarios, table recognition, task → column requirements, role/label mapping |

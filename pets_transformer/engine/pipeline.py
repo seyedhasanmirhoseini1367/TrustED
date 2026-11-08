@@ -10,7 +10,7 @@ import pandas as pd
 
 from . import __version__
 from .gates import assign_gates, attacker_known, column_groups, derive_knowledge, promote_green
-from .ladders import Ladder, make_ladder
+from .ladders import DroppableLadder, Ladder, make_ladder
 from .profiling import detect_domain, parse_dates, profile_dataframe
 from .risk import k_metrics, l_diversity
 from .roles import ColumnProfile, Gate, RedAction, Role, Scenario
@@ -72,6 +72,9 @@ def fit_ladders(df: pd.DataFrame, profiles: list[ColumnProfile], scenario: Scena
             continue
         lad = make_ladder(p.name, p.ladder, scenario.hierarchies.get(p.name), int(scenario.min_k), ref, age_name)
         if lad is not None:
+            # quasi-identifiers may be dropped as a last resort (categorical ladders already end with that level)
+            if p.role in (Role.QUASI_ID, Role.DATE, Role.LOCATION) and not lad.drops(lad.max_level):
+                lad = DroppableLadder(lad)
             ladders[p.name] = lad.fit(df[p.name])
     return ladders
 
@@ -101,7 +104,11 @@ def place_names(df: pd.DataFrame, profiles: list[ColumnProfile]) -> list[str]:
 def run(df: pd.DataFrame, scenario: Scenario, profiles: list[ColumnProfile] | None = None, gold: dict | None = None,
         gold_column: str | None = None, secret: bytes | None = None, use_presidio: bool = True,
         progress: Callable[[str], None] | None = None,
-        extra_names: list[str] | None = None, extra_places: list[str] | None = None) -> RunResult:
+        extra_names: list[str] | None = None, extra_places: list[str] | None = None,
+        context: pd.DataFrame | None = None) -> RunResult:
+    """Protect one table. `context`: attributes of linked parent tables, already protected, joined onto this table's
+    rows (columns named 'parent.column'). They count as known attributes in the re-identification test, so k and the
+    re-identification rate hold on the joined view, but they are not part of this table's output."""
     t0 = time.time()
     say = progress or (lambda m: None)
     df = df.reset_index(drop=True)
@@ -126,8 +133,12 @@ def run(df: pd.DataFrame, scenario: Scenario, profiles: list[ColumnProfile] | No
     known = list(known_declared)
     derived = derive_knowledge(df, profiles, known) if scenario.derive_knowledge else []
     known += [d["column"] for d in derived if d["column"] not in known]
-    promoted = promote_green(df, profiles, known, scenario)
+    # attributes joined from linked parent tables are part of the threat model from here on
+    ctx_cols = [] if context is None else [c for c in context.columns if c not in df.columns]
+    df_risk = df if not ctx_cols else pd.concat([df, context[ctx_cols].reindex(df.index)], axis=1)
+    promoted = promote_green(df_risk, profiles, known + ctx_cols, scenario)
     known += [d["column"] for d in promoted if d["column"] not in known]
+    known = known + ctx_cols
     # anything the attacker knows is a quasi-identifier by definition, so it joins the search space
     for p in profiles:
         if p.name in known and p.gate == Gate.GREEN and p.ladder is not None and p.role != Role.TARGET:
@@ -177,7 +188,7 @@ def run(df: pd.DataFrame, scenario: Scenario, profiles: list[ColumnProfile] | No
                 cap_notes.append({"column": col, "max_level": ladders[col].level_names[caps[col]]})
             except ValueError as exc:
                 cap_notes.append({"column": col, "error": str(exc)})
-    searcher = GreedySearch(df, profiles, ladders, scenario, known, groups, proxy, caps)
+    searcher = GreedySearch(df_risk, profiles, ladders, scenario, known, groups, proxy, caps)
     before = searcher.evaluate({c: 0 for c in ladders}, False)
     res = searcher.run()
     yellow_levels = {c: lvl for c, lvl in res.levels.items() if by_name[c].gate == Gate.YELLOW}
@@ -188,8 +199,8 @@ def run(df: pd.DataFrame, scenario: Scenario, profiles: list[ColumnProfile] | No
     say("measuring utility")
     # attribute disclosure concerns sensitive values the attacker does not already know
     sensitive = [p.name for p in profiles if p.role == Role.SENSITIVE and p.name in protected.columns and p.name not in known]
-    orig_view = pd.DataFrame({c: df[c] for c in known}, index=df.index)
-    prot_known = pd.DataFrame({c: (ladders[c].apply(df[c], res.levels.get(c, 0)) if c in ladders else df[c])
+    orig_view = pd.DataFrame({c: df_risk[c] for c in known}, index=df.index)
+    prot_known = pd.DataFrame({c: (ladders[c].apply(df[c], res.levels.get(c, 0)) if c in ladders else df_risk[c])
                                for c in known}, index=df.index).loc[protected.index]
     k_before = k_metrics(orig_view, known, int(scenario.min_k))
     k_after = k_metrics(prot_known, known, int(scenario.min_k))
@@ -209,10 +220,31 @@ def run(df: pd.DataFrame, scenario: Scenario, profiles: list[ColumnProfile] | No
                       suppress=pt["suppress"], suppressed_rids=m["suppressed"] if m else [])
             tu = task if i == len(res.path) - 1 else task_utility(df, profiles, ladders, pl, secret, target,
                                                                     scenario.task_type, scenario.seed, baseline=task)
-            curve_task[i] = tu["retained"][tu["headline"]]
+            curve_task[i] = tu["score"]
     for i, pt in enumerate(res.path):
         pt["task_retained"] = curve_task.get(i)
     descriptive = descriptive_utility(df, protected, profiles, ladders, yellow_levels, scenario.key_columns)
+    # every further prediction purpose (e.g. categories AND numbers) gets its own model evaluation
+    tasks = [task] if task else []
+    for purpose, tgt in scenario.prediction_tasks:
+        if tgt in df.columns and not any(t["task"] == purpose and t["target"] == tgt for t in tasks):
+            tasks.append(task_utility(df, profiles, ladders, plan, secret, tgt, purpose, scenario.seed))
+    # utility per selected purpose; the overall score is their mean
+    by_purpose = {}
+    for purpose in scenario.purposes:
+        if purpose in ("classification", "regression"):
+            mine = [t for t in tasks if t["task"] == purpose]
+            if mine:
+                by_purpose[purpose] = {
+                    "score": float(np.mean([t["score"] for t in mine])),
+                    "measured_by": (f"mean over {len(mine)} models ({', '.join(t['target'] for t in mine)}); " if len(mine) > 1
+                                    else f"model predicting {mine[0]['target']}; ") + mine[0]["score_formula"]}
+        elif purpose == "descriptive":
+            by_purpose[purpose] = {"score": descriptive["query_score"],
+                                   "measured_by": "aggregate queries on the original columns (1 − mean relative error / 0.5)"}
+        else:
+            by_purpose[purpose] = {"score": descriptive["distribution_score"],
+                                   "measured_by": "distributions vs. original values (TVD, Wasserstein / sd)"}
 
     # ---------------------------------------------------------------- decisions
     decisions = []
@@ -238,6 +270,8 @@ def run(df: pd.DataFrame, scenario: Scenario, profiles: list[ColumnProfile] | No
             lad = ladders[p.name]
             row["level"] = lad.describe(lvl)
             row["pet"] = PET_NAMES.get(p.ladder, "Generalisation") if lvl > 0 else "None needed"
+            if lad.drops(lvl):
+                row["pet"] = "Suppression (column dropped)"
             if p.name in unit_cols:
                 c = contrib_by_col.get(p.name)
                 if c and c["steps"]:
@@ -278,7 +312,7 @@ def run(df: pd.DataFrame, scenario: Scenario, profiles: list[ColumnProfile] | No
         "proxy_before": before["proxy"], "proxy_after": after["proxy"],
         "l_diversity_before": l_before, "l_diversity_after": l_after,
     }
-    utility_score = task["retained"][task["headline"]] if task else descriptive["score"]
+    utility_score = float(np.mean([v["score"] for v in by_purpose.values()])) if by_purpose else descriptive["score"]
 
     report = {
         "tool": {"name": "TrustED PETs Transformer", "engine_version": __version__},
@@ -289,6 +323,7 @@ def run(df: pd.DataFrame, scenario: Scenario, profiles: list[ColumnProfile] | No
             "derived_knowledge": derived,
             "promoted_green_columns": promoted,
             "attacker_knows": known,
+            "linked_context_columns": ctx_cols,
             "attacker_sample_fraction": scenario.attacker_fraction,
             "attacker_targets": int(after["attack"]["targets"]),
             "statement": _threat_statement(scenario, known, derived),
@@ -302,7 +337,8 @@ def run(df: pd.DataFrame, scenario: Scenario, profiles: list[ColumnProfile] | No
                 "tasks_sacrificed": scenario.sacrificed_tasks} if scenario.kit_scenario else None,
         "target_met": res.target_met,
         "metrics": metrics,
-        "utility": {"score": utility_score, "task": task, "descriptive": descriptive},
+        "utility": {"score": utility_score, "task": task, "tasks": tasks, "by_purpose": by_purpose,
+                    "descriptive": descriptive},
         "search_path": res.path,
         "text": text_report,
         "text_examples_redacted": [{"column": e["column"], "redacted": e["redacted"]} for e in text_examples],

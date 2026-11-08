@@ -1,0 +1,38 @@
+{% extends "wizard/base.html" %}
+{% load pets %}
+{% block content %}
+<h1>Project — {{ members|length }} related tables</h1>
+<p class="sub">The tables are protected together: links between them are kept (as keyed pseudonyms), and the
+re-identification test also counts what a linked parent table reveals about each row.</p>
+{% if job.note %}<div class="banner"><b>Note:</b> {{ job.note }}</div>{% endif %}
+<div class="banner"><b>Use only synthetic or approved data.</b> The original files stay on this machine and are never exported.</div>
+
+<div class="card">
+  <h2>Tables</h2>
+  <div class="tbl"><table>
+    <tr><th>Table</th><th>Rows × columns</th><th>Looks like</th><th>Detected types</th><th></th></tr>
+    {% for m in members %}<tr><td class="mono"><b>{{ m.name }}</b>{% if m.note %}<div class="hint">{{ m.note }}</div>{% endif %}</td>
+      <td>{{ m.n_rows }} × {{ m.n_cols }}</td><td>{{ m.domain|default:"—" }}</td>
+      <td class="hint">{% for p in m.profile %}{% if p.gate == "red" %}<span class="gate red" style="font-size:10px">{{ p.name }}</span> {% elif p.role == "QUASI_ID" or p.role == "DATE" or p.role == "LOCATION" %}<span class="gate yellow" style="font-size:10px">{{ p.name }}</span> {% endif %}{% endfor %}</td>
+      <td><a class="btn small secondary" href="{% url 'profile' m.id %}">Review profile</a></td></tr>{% endfor %}
+  </table></div>
+  <p class="hint">Red: identifiers (dropped or pseudonymised); yellow: quasi-identifiers. Review a table's profile to change roles.</p>
+</div>
+
+<form method="post" class="card">{% csrf_token %}
+  <h2>Links between tables</h2>
+  {% if links %}
+  <p class="hint">Detected from the values: a column whose values (≥ 90 %) appear in another table's unique key is a
+    foreign key; the same identifier in two tables is a shared identifier. Untick a link that is wrong.</p>
+  <div class="tbl"><table>
+    <tr><th>Keep</th><th>From</th><th></th><th>To</th><th>Kind</th><th>Coverage</th></tr>
+    {% for i, l in links %}<tr><td><input type="checkbox" name="keep" value="{{ i }}" {% if l.keep %}checked{% endif %}></td>
+      <td class="mono">{{ l.child }}.<b>{{ l.child_col }}</b></td><td>→</td><td class="mono">{{ l.parent }}.<b>{{ l.parent_col }}</b></td>
+      <td>{{ l.kind }}</td><td>{{ l.coverage|pct }}</td></tr>{% endfor %}
+  </table></div>
+  {% else %}<p>No links found: the tables will be protected independently (still with one pseudonymisation key, so equal
+    identifiers get equal pseudonyms).</p>{% endif %}
+  <div class="actions"><a class="btn secondary" href="{% url 'home' %}">Start over</a>
+    <button class="btn" type="submit">Continue → Scenario</button></div>
+</form>
+{% endblock %}

@@ -1,0 +1,63 @@
+{% extends "wizard/base.html" %}
+{% load pets %}
+{% block content %}
+<h1>Scenario: threat model + tasks — all tables</h1>
+<p class="sub">One scenario for the whole project. Tables are protected parents first; for a linked table the known attributes
+include what its parent table releases, so the joined data cannot single anyone out either.</p>
+<div id="err">{% if error %}<div class="error">{{ error }}</div>{% endif %}</div>
+<form method="post" hx-post="{% url 'project_scenario' job.id %}" hx-target="#err" hx-indicator="#overlay">{% csrf_token %}
+<div class="stack">
+{% if kit_options %}
+<div class="card">
+  <h2>1. Official kit scenario</h2>
+  <select name="kit_scenario">
+    <option value="">— none: use the settings below —</option>
+    {% for s in kit_options %}<option value="{{ s.id }}" {% if forloop.first %}selected{% endif %}>{{ s.id }} · {{ s.title }} ({{ s.trust_level }})</option>{% endfor %}
+  </select>
+  <p class="hint">Each table of the kit dataset gets the official recipient, known attributes and task requirements; tables
+    outside it use the settings below.</p>
+</div>{% endif %}
+
+<div class="card">
+  <h2>Who receives the data</h2>
+  <select name="recipient">{% for key, r in recipients.items %}<option value="{{ key }}" {% if key == "partner" %}selected{% endif %}>{{ r.label }} (re-identification ≤ {{ r.max_linkage|pct:0 }}, k ≥ {{ r.min_k }})</option>{% endfor %}</select>
+  <div class="field"><label>Scenario description (shown in the reports)</label><textarea name="description"></textarea></div>
+</div>
+
+<div class="card">
+  <h2>Purpose: what will the data be used for?</h2>
+  <div class="purposes">{% for value, label, hint in purposes %}<label class="purpose"><input type="checkbox" name="purposes" value="{{ value }}" checked>
+    <span><b>{{ label }}</b><br><span class="hint">{{ hint }}</span></span></label>{% endfor %}</div>
+  <p><b>Prediction models per table</b> <span class="hint">(optional; only columns that fit the model type are offered)</span></p>
+  <div class="tbl"><table><tr><th>Table</th><th>Model: categories</th><th>Model: numbers</th></tr>
+    {% for r in rows %}<tr><td class="mono">{{ r.job.name }}</td>
+      <td><select name="target_classification__{{ r.job.id }}"><option value="">— none —</option>{% for c in r.cat %}<option>{{ c }}</option>{% endfor %}</select></td>
+      <td><select name="target_regression__{{ r.job.id }}"><option value="">— none —</option>{% for c in r.num %}<option>{{ c }}</option>{% endfor %}</select></td></tr>{% endfor %}
+  </table></div>
+</div>
+
+<div class="card">
+  <h2>Threat model: known attributes</h2>
+  <p>Who receives the data and what they may already know about people in it. The tool generalises the data until
+    these known attributes can no longer single anyone out.</p>
+  <p class="hint">Per table: every quasi-identifier (the internal team also knows insider columns), plus the attributes a
+    linked parent table releases.</p>
+  {% for r in rows %}<div><code>{{ r.job.name }}</code>: {{ r.qis|joinlist }}</div>{% endfor %}
+  {% if links %}<p class="hint" style="margin-top:8px">Links kept: {% for l in links %}<code>{{ l.child }}.{{ l.child_col }} → {{ l.parent }}.{{ l.parent_col }}</code>{% if not forloop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+</div>
+
+<details class="card"><summary><b>Advanced settings</b> <span class="hint">seed, thresholds</span></summary>
+  <div class="row" style="margin-top:10px">
+    <div class="field"><label>Max re-identification rate (%)</label><input type="number" step="0.1" min="0" max="100" name="max_linkage"><div class="hint">empty = recipient default</div></div>
+    <div class="field"><label>Minimum k</label><input type="number" min="1" max="100" name="min_k"><div class="hint">empty = recipient default</div></div>
+    <div class="field"><label>Random seed</label><input type="number" name="seed" value="42"></div>
+  </div>
+</details>
+</div>
+<div class="actions"><a class="btn secondary" href="{% url 'project' job.id %}">← Tables &amp; links</a>
+  <button class="btn" type="submit">Protect all tables →</button></div>
+<div class="overlay" id="overlay"><div class="box"><div class="spinner dark"></div>
+  <div><b>Protecting {{ rows|length }} tables…</b><div class="hint">Parents first, then linked tables with their parent's attributes;
+    free text in every table. Large projects take a few minutes.</div></div></div></div>
+</form>
+{% endblock %}

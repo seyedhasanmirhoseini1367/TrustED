@@ -16,7 +16,7 @@ from engine.risk import k_metrics, l_diversity, linkage_attack
 from engine.roles import Gate, Role, Scenario
 from engine.search import GreedySearch
 from engine.text_pii import Redactor, evaluate
-from engine.transforms import Plan, pseudonymise, truncate_ip
+from engine.transforms import Plan, apply_plan, pseudonymise, truncate_ip
 from engine.utility import ProxyUtility
 
 SECRET = b"test-secret"
@@ -313,7 +313,9 @@ def test_utility_caps_are_respected_and_export_follows_kit_conventions():
     assert levels["visit_date"] <= 1 and levels["postcode"] == 0
     assert {u["column"] for u in r.report["utility_requirements"]} == {"visit_date", "postcode"}
     out = r.export_table()
-    if levels["date_of_birth"] >= 3:
+    if r.report["decisions"][[d["column"] for d in r.report["decisions"]].index("date_of_birth")]["pet"].startswith("Suppression"):
+        assert "age" not in out.columns and "date_of_birth" not in out.columns   # dropped as the last resort
+    elif levels["date_of_birth"] >= 3:
         assert "age" in out.columns and "date_of_birth" not in out.columns
     assert list(r.rowmap.columns) == ["protected_row", "original_record_id"]
     assert len(r.rowmap) == len(out)
@@ -390,3 +392,83 @@ def test_tolerant_linkage_never_beats_exact_attacker():
     t0 = tolerant_linkage(pd.DataFrame(index=att), val.loc[att], pd.DataFrame(index=df.index), lo, lo, {"arrival": (0, 0)})
     e0 = linkage_attack(pd.DataFrame({"arrival": df["arrival"]}).loc[att], pd.DataFrame({"arrival": df["arrival"]}), ["arrival"])
     assert t0["success_rate"] == pytest.approx(e0["success_rate"])
+
+
+def test_categorical_ladder_top_n_star_and_drop():
+    s = pd.Series([f"employer{i % 40}" for i in range(400)] + ["rare1", "rare2"])
+    lad = CategoricalLadder("employer").fit(s)
+    names = lad.level_names
+    assert names[3:] == ["top 20 categories + Other", "top 5 categories + Other", "* (all values suppressed)", "column dropped"]
+    assert lad.apply(s, 3).nunique() == 21 and lad.apply(s, 4).nunique() == 6
+    assert set(lad.apply(s, 5)) == {"*"} and lad.drops(6) and not lad.drops(5)
+    # a dropped quasi-identifier is absent from the release; its information loss is full
+    df = pd.DataFrame({"employer": s})
+    prof = profile_dataframe(df)
+    prof[0].gate = Gate.YELLOW
+    out = apply_plan(df, prof, {"employer": lad}, Plan(levels={"employer": 6}), SECRET)
+    assert "employer" not in out.columns and lad.info_loss(6) == 1.0
+
+
+def test_descriptive_fidelity_is_measured_against_original_values():
+    from engine.utility import descriptive_utility
+    df = _toy(600)
+    sc = Scenario(recipient="partner", key_columns=["postcode"], attacker_qis=["date_of_birth", "gender", "postcode", "visit_date"],
+                  task_type="descriptive")
+    r = run(df, sc, secret=SECRET, use_presidio=False)
+    d = r.report["utility"]["descriptive"]
+    pc = next(x for x in d["distributions"] if x["column"] == "postcode")
+    if r.report["plan"]["levels"].get("postcode", 0) > 0:
+        assert pc["tvd"] > 0          # generalised postcodes no longer look perfect
+    dob = next(x for x in d["distributions"] if x["column"] == "date_of_birth")
+    assert dob["wasserstein_sd"] > 0
+    assert "original" in d["method"]
+
+
+def test_task_utility_score_combines_metrics():
+    df = _toy(500)
+    sc = Scenario(recipient="partner", target="outcome", attacker_qis=["date_of_birth", "gender", "postcode", "visit_date"])
+    t = run(df, sc, secret=SECRET, use_presidio=False).report["utility"]["task"]
+    parts = [min(1, t["retained"]["roc_auc"])] + ([min(1, t["retained"]["f1"])] if t["original"]["f1"] else [])
+    assert t["score"] == pytest.approx(sum(parts) / len(parts)) and "F1" in t["score_formula"]
+
+
+# ---------------------------------------------------------------- several related tables
+def _toy_project():
+    parent = _toy(400)
+    parent.insert(0, "visit_id", [f"V{i:05d}" for i in range(len(parent))])
+    rng = np.random.default_rng(7)
+    child = pd.DataFrame({"lab_id": [f"L{i:06d}" for i in range(900)],
+                          "visit_id": [f"V{int(v):05d}" for v in rng.integers(0, 400, 900)],
+                          "sampled_ts": [str(pd.Timestamp("2025-01-01") + pd.Timedelta(hours=int(h)))
+                                         for h in rng.integers(0, 8000, 900)],
+                          "value": rng.normal(100, 15, 900).round(1).astype(str)})
+    return {"visits": parent, "labs": child}
+
+
+def test_link_detection_and_order():
+    from engine.relations import detect_links, processing_order
+    tables = _toy_project()
+    profiles = {n: profile_dataframe(df) for n, df in tables.items()}
+    links = detect_links(tables, profiles)
+    fk = [l for l in links if l["kind"] == "foreign key"]
+    assert len(fk) == 1 and fk[0]["child"] == "labs" and fk[0]["parent"] == "visits" and fk[0]["coverage"] == 1.0
+    assert fk[0]["child_col"] == "visit_id" and fk[0]["parent_col"] == "visit_id"
+    assert processing_order(["labs", "visits"], links) == ["visits", "labs"]
+
+
+def test_project_protects_the_joined_view_and_keeps_links():
+    from engine.project import run_project
+    from engine.risk import class_sizes
+    tables = _toy_project()
+    sc = Scenario(recipient="partner", task_type="descriptive")
+    proj = run_project(tables, sc, secret=SECRET, use_presidio=False)
+    assert proj.order == ["visits", "labs"]
+    labs = proj.results["labs"]
+    ctx = labs.report["threat_model"]["linked_context_columns"]
+    assert ctx and all(c.startswith("visits.") for c in ctx)          # the parent's attributes were joined
+    # the joined view (lab attributes + the visit's released attributes) meets k on the released lab rows
+    assert labs.report["metrics"]["after"]["min_k"] >= sc.min_k
+    assert all(not c.startswith("visits.") for c in labs.protected.columns)   # context is not output
+    link = next(l for l in proj.links if l["kind"] == "foreign key")
+    assert link["integrity"] > 0.9                                     # pseudonymised keys still join
+    assert labs.protected["visit_id"].iloc[0] != tables["labs"]["visit_id"].iloc[0]

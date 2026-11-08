@@ -84,11 +84,14 @@ class ProxyUtility:
 
 # ---------------------------------------------------------------- features
 def build_features(orig_part: pd.DataFrame, prot_part: pd.DataFrame | None, profiles: list[ColumnProfile],
-                   ladders: dict[str, Ladder], levels: dict[str, int]) -> pd.DataFrame:
-    """Feature matrix for the original part (prot_part None) or the protected part (aligned on index)."""
+                   ladders: dict[str, Ladder], levels: dict[str, int], target: str | None = None) -> pd.DataFrame:
+    """Feature matrix for the original part (prot_part None) or the protected part (aligned on index).
+    The model's own target is excluded; other prediction targets are ordinary released columns."""
     feats = {}
     for p in profiles:
-        if p.role in (Role.TARGET, Role.FREE_TEXT) or p.kind == Kind.ID or p.name not in orig_part.columns:
+        if p.name == target or p.role == Role.FREE_TEXT or p.kind == Kind.ID or p.name not in orig_part.columns:
+            continue
+        if target is None and p.role == Role.TARGET:
             continue
         if prot_part is not None and (p.gate == Gate.RED or p.name not in prot_part.columns):
             continue
@@ -147,6 +150,11 @@ def _fit_eval(Xtr, ytr, Xte, yte, task: str, seed: int) -> dict:
                 aucs.append(roc_auc_score(pos.astype(int), proba[:, i]))
         auc = float(np.mean(aucs)) if aucs else float("nan")
         if len(classes) == 2:
+            # F1 at a threshold that flags the training prevalence: with a rare positive class the default 0.5
+            # threshold predicts almost no positives and F1 (and any ratio of F1s) becomes noise
+            prevalence = float(np.mean(np.asarray(ytr) == classes[1]))
+            thr = float(np.quantile(proba[:, 1], 1 - prevalence)) if 0 < prevalence < 1 else 0.5
+            pred = np.where(proba[:, 1] >= thr, classes[1], classes[0])
             f1 = f1_score(yte, pred, pos_label=classes[1], labels=classes, average="binary", zero_division=0) \
                 if set(np.unique(yte)) <= set(classes) else f1_score(yte, pred, average="macro", zero_division=0)
         else:
@@ -179,8 +187,8 @@ def task_utility(df: pd.DataFrame, profiles: list[ColumnProfile], ladders: dict[
     y_te = orig_test[target].astype(str).str.strip() if task == "classification" else to_number(orig_test[target])
 
     if baseline is None:
-        Xtr_o, Xte_o = _encode(build_features(orig_train, None, profiles, ladders, {}),
-                               build_features(orig_test, None, profiles, ladders, {}))
+        Xtr_o, Xte_o = _encode(build_features(orig_train, None, profiles, ladders, {}, target),
+                               build_features(orig_test, None, profiles, ladders, {}, target))
         base = _fit_eval(Xtr_o, y_tr.to_numpy(), Xte_o, y_te.to_numpy(), task, seed)
         n_feat_orig = int(Xtr_o.shape[1])
     else:
@@ -189,8 +197,8 @@ def task_utility(df: pd.DataFrame, profiles: list[ColumnProfile], ladders: dict[
     prot_train = apply_plan(orig_train, profiles, ladders, plan, secret)        # suppressed rows leave the train set
     test_plan = Plan(levels=plan.levels, suppress=False)                         # every future record is generalised
     prot_test = apply_plan(orig_test, profiles, ladders, test_plan, secret)
-    ftr = build_features(orig_train.loc[prot_train.index], prot_train, profiles, ladders, plan.levels)
-    fte = build_features(orig_test, prot_test, profiles, ladders, plan.levels)
+    ftr = build_features(orig_train.loc[prot_train.index], prot_train, profiles, ladders, plan.levels, target)
+    fte = build_features(orig_test, prot_test, profiles, ladders, plan.levels, target)
     Xtr_p, Xte_p = _encode(ftr, fte)
     prot = _fit_eval(Xtr_p, y_tr.loc[prot_train.index].to_numpy(), Xte_p, y_te.to_numpy(), task, seed)
 
@@ -199,82 +207,115 @@ def task_utility(df: pd.DataFrame, profiles: list[ColumnProfile], ladders: dict[
                     and not np.isnan(prot["roc_auc"]) else 0.0,
                     "f1": prot["f1"] / base["f1"] if base["f1"] else 0.0}
         headline = "roc_auc"
+        parts = [retained["roc_auc"]] + ([retained["f1"]] if base["f1"] else [])
+        formula = ("mean(min(1, ROC-AUC protected / original), min(1, F1 protected / original)); "
+                   "F1 at the threshold that flags the training prevalence")
     else:
         retained = {"r2": prot["r2"] / base["r2"] if base["r2"] > 0 else 0.0,
                     "mae": base["mae"] / prot["mae"] if prot["mae"] else 1.0}
         headline = "r2"
+        parts = [retained["r2"], retained["mae"]]
+        formula = "mean(min(1, R² protected / original), min(1, MAE original / protected))"
+    # every metric counts; ratios above 1 (noise) are capped so they cannot hide a loss elsewhere
+    score = float(np.mean([min(1.0, max(0.0, x)) for x in parts]))
     return {"task": task, "target": target, "model": "RandomForest (200 trees, seeded)", "original": base,
-            "protected": prot, "retained": retained, "headline": headline,
+            "protected": prot, "retained": retained, "headline": headline, "score": score, "score_formula": formula,
             "train_rows": int(len(train_idx)), "test_rows": int(len(test_idx)), "rows_without_label": n_unlabelled,
             "protected_train_rows": int(len(prot_train)), "features_original": n_feat_orig,
             "features_protected": int(Xtr_p.shape[1])}
 
 
 # ---------------------------------------------------------------- descriptive
+def _spread(orig: pd.Series, labels: pd.Series, released_index: pd.Index) -> pd.Series:
+    """Estimated count of every ORIGINAL value from the protected data: each released bin's count is spread
+    uniformly over the original values that bin covers (the analyst's best guess without the original)."""
+    o = orig.astype("string").fillna("<NA>")
+    lab = labels.astype("string").fillna("<NA>")
+    covers = o.groupby(lab).nunique()                       # number of original values per released bin
+    bin_counts = lab.loc[released_index].value_counts()
+    per_value = (bin_counts / covers.reindex(bin_counts.index)).to_dict()
+    value_bin = pd.Series(lab.to_numpy(), index=o.to_numpy()).groupby(level=0).first()
+    return pd.Series({v: per_value.get(b, 0.0) for v, b in value_bin.items()}, dtype=float)
+
+
 def descriptive_utility(df: pd.DataFrame, protected: pd.DataFrame, profiles: list[ColumnProfile],
                         ladders: dict[str, Ladder], levels: dict[str, int], key_columns: list[str]) -> dict:
-    """Relative error of fixed aggregate queries + per-column distribution distances."""
-    released = [p for p in profiles if p.name in protected.columns and p.role != Role.FREE_TEXT and p.kind != Kind.ID]
-    numeric_cols = [p.name for p in released if p.name in ladders and ladders[p.name].numeric_capable
-                    and p.ladder in ("numeric", "age") and to_number(df[p.name]).notna().mean() > 0.9]
-    numeric_cols += [p.name for p in released if p.role == Role.TARGET and to_number(df[p.name]).notna().mean() > 0.95
-                     and p.name not in numeric_cols]
-    group_cols = [c for c in key_columns if c in protected.columns] or \
-                 [p.name for p in released if p.ladder in ("categorical", "code", "postcode") and p.gate != Gate.RED][:3]
+    """Fidelity for descriptive use, measured against the ORIGINAL data.
 
-    def num(col, frame_index, prot: bool):
+    Aggregate queries (counts and means per original value of a grouping column) are answered from the protected
+    data: a generalised group's count is spread uniformly over the original values it covers, numeric means use
+    bin / period midpoints, suppressed rows are simply missing. Distributions: categorical columns compare the
+    original category distribution with the spread estimate (TVD); numeric columns compare original values with
+    protected midpoints (Wasserstein distance / sd). A column that is not released scores 0.
+    """
+    by = {p.name: p for p in profiles}
+    usable = [p for p in profiles if p.name in df.columns and p.role != Role.FREE_TEXT and p.kind != Kind.ID
+              and p.gate != Gate.RED]
+    numeric_cols = [p.name for p in usable if p.name in protected.columns and p.name in ladders
+                    and ladders[p.name].numeric_capable and p.ladder in ("numeric", "age")
+                    and to_number(df[p.name]).notna().mean() > 0.9]
+    numeric_cols += [p.name for p in usable if p.role == Role.TARGET and p.name in protected.columns
+                     and to_number(df[p.name]).notna().mean() > 0.95 and p.name not in numeric_cols]
+    group_cols = [c for c in key_columns if c in by and by[c] in usable and by[c].ladder != "numeric"] or \
+                 [p.name for p in usable if p.ladder in ("categorical", "code", "postcode")][:3]
+
+    def labels(col: str) -> pd.Series:   # released value of every row (also for suppressed rows: same public rule)
         lad = ladders.get(col)
-        if lad is not None and lad.numeric_capable:
-            return lad.numeric(df[col], levels.get(col, 0) if prot else 0).loc[frame_index]
-        return to_number(df[col]).loc[frame_index]
+        return lad.apply(df[col], levels.get(col, 0)) if lad is not None else df[col]
+
+    def prot_num(col: str) -> pd.Series:
+        lad = ladders.get(col)
+        v = lad.numeric(df[col], levels.get(col, 0)) if lad is not None and lad.numeric_capable else to_number(df[col])
+        return v.loc[protected.index]
 
     queries = []
     for g in group_cols:
-        lad = ladders.get(g)
-        g_orig = (lad.apply(df[g], levels.get(g, 0)) if lad is not None else df[g]).astype("string").fillna("<NA>")
-        g_prot = protected[g].astype("string").fillna("<NA>")
-        c_o, c_p = g_orig.value_counts(), g_prot.value_counts()
-        for grp, n in c_o.items():
-            if n < 5:
-                continue
-            queries.append({"query": f"count by {g}", "group": grp, "original": float(n), "protected": float(c_p.get(grp, 0))})
+        o = df[g].astype("string").fillna("<NA>")
+        lab = labels(g).astype("string").fillna("<NA>")
+        true_counts = o.value_counts()
+        est_counts = _spread(df[g], labels(g), protected.index)
+        for v, n in true_counts.items():
+            if n >= 5:
+                queries.append({"query": f"count by {g}", "group": v, "original": float(n),
+                                "protected": float(est_counts.get(v, 0.0))})
+        bin_of = pd.Series(lab.to_numpy(), index=o.to_numpy()).groupby(level=0).first()
         for m in numeric_cols:
             if m == g:
                 continue
-            mo = num(m, df.index, False).groupby(g_orig).mean()
-            mp = num(m, protected.index, True).groupby(g_prot.loc[protected.index]).mean()
-            for grp, val in mo.items():
-                if c_o.get(grp, 0) < 5 or pd.isna(val):
+            true_mean = to_number(df[m]).groupby(o).mean()
+            prot_mean = prot_num(m).groupby(lab.loc[protected.index]).mean()   # per released bin
+            for v, val in true_mean.items():
+                if true_counts.get(v, 0) < 5 or pd.isna(val):
                     continue
-                queries.append({"query": f"mean {m} by {g}", "group": grp, "original": float(val),
-                                "protected": float(mp.get(grp, np.nan))})
+                queries.append({"query": f"mean {m} by {g}", "group": v, "original": float(val),
+                                "protected": float(prot_mean.get(bin_of.get(v), np.nan))})
     rel = []
     for q in queries:
-        if pd.isna(q["protected"]):
-            q["rel_error"] = 1.0
-        else:
-            q["rel_error"] = abs(q["protected"] - q["original"]) / max(abs(q["original"]), 1e-9)
+        q["rel_error"] = 1.0 if pd.isna(q["protected"]) else \
+            abs(q["protected"] - q["original"]) / max(abs(q["original"]), 1e-9)
         rel.append(min(q["rel_error"], 1.0))
     mre = float(np.mean(rel)) if rel else 0.0
 
     dist = []
-    for p in released:
+    for p in usable:
         col = p.name
         lad = ladders.get(col)
-        lvl = levels.get(col, 0)
-        o = (lad.apply(df[col], lvl) if lad is not None else df[col]).astype("string").fillna("<NA>")
-        pr = protected[col].astype("string").fillna("<NA>")
-        po, pp = o.value_counts(normalize=True), pr.value_counts(normalize=True)
-        tvd = 0.5 * float(po.subtract(pp, fill_value=0).abs().sum())
-        entry = {"column": col, "tvd": tvd}
+        if col not in protected.columns:
+            dist.append({"column": col, "released": False})
+            continue
+        entry = {"column": col, "released": True}
         if lad is not None and lad.numeric_capable:
             a = lad.numeric(df[col], 0).dropna().to_numpy()
-            b = lad.numeric(df[col], lvl).loc[protected.index].dropna().to_numpy()
-            sd = float(np.std(a)) or 1.0
+            b = prot_num(col).dropna().to_numpy()
             if len(a) and len(b):
-                entry["wasserstein_sd"] = float(wasserstein_distance(a, b) / sd)
+                entry["wasserstein_sd"] = float(wasserstein_distance(a, b) / (float(np.std(a)) or 1.0))
+        else:
+            orig = df[col].astype("string").fillna("<NA>").value_counts(normalize=True)
+            est = _spread(df[col], labels(col), protected.index)
+            est = est / est.sum() if est.sum() else est
+            entry["tvd"] = 0.5 * float(orig.subtract(est, fill_value=0).abs().sum())
         dist.append(entry)
-    dist_scores = [1 - min(1.0, max(d["tvd"], d.get("wasserstein_sd", 0.0))) for d in dist]
+    dist_scores = [0.0 if not d["released"] else 1 - min(1.0, d.get("tvd", d.get("wasserstein_sd", 0.0))) for d in dist]
     query_score = 1 - min(1.0, mre / 0.5)
     dist_score = float(np.mean(dist_scores)) if dist_scores else 1.0
     return {
@@ -287,4 +328,8 @@ def descriptive_utility(df: pd.DataFrame, protected: pd.DataFrame, profiles: lis
         "distributions": dist,
         "group_columns": group_cols,
         "numeric_columns": numeric_cols,
+        "method": ("Queries on the original columns answered from the protected data (generalised counts spread "
+                   "uniformly over the original values they cover; means from midpoints). TVD over original "
+                   "categories; Wasserstein distance / sd between original values and protected midpoints. "
+                   "A column that is not released scores 0."),
     }

@@ -18,7 +18,8 @@ from pathlib import Path
 
 from . import kit
 from .dp import dp_query, error_curve
-from .pipeline import load_table, person_names, place_names, run
+from .pipeline import load_table, run
+from .project import run_project
 from .profiling import detect_domain, profile_dataframe
 from .report import render_html, to_json
 from .roles import ColumnProfile, Scenario
@@ -43,61 +44,71 @@ def cmd_profile(a) -> int:
     return 0
 
 
+def _table_scenario(a, sc: Scenario, df, tasks) -> Scenario:
+    if a.kit_scenario:
+        return kit.scenario_from_kit(a.kit_scenario, list(df.columns), tasks, seed=sc.seed)
+    table_sc = Scenario.from_dict({**sc.to_dict(), "attacker_qis": [c for c in sc.attacker_qis if c in df.columns],
+                                   "target": sc.target if sc.target in df.columns else None,
+                                   "targets": {k: [c for c in v if c in df.columns] for k, v in sc.targets.items()},
+                                   "key_columns": [c for c in sc.key_columns if c in df.columns]})
+    if table_sc.target is None and table_sc.task_type in ("classification", "regression"):
+        table_sc.task_type = "descriptive"
+    return table_sc
+
+
+def _write(res, name: str, out_root: Path) -> None:
+    # kit conventions: same table file name, original column names, rowmap_<table>.csv (never publish the row map)
+    res.export_table().to_csv(out_root / f"{name}.csv", index=False)
+    res.rowmap.to_csv(out_root / f"rowmap_{name}.csv", index=False)
+    rep_dir = out_root / "reports"
+    rep_dir.mkdir(exist_ok=True)
+    (rep_dir / f"{name}.report.json").write_text(to_json(res.report), encoding="utf-8")
+    (rep_dir / f"{name}.report.html").write_text(render_html(res.report), encoding="utf-8")
+    r = res.report
+    b, af = r["metrics"]["before"], r["metrics"]["after"]
+    _print(f"{name}: re-identification rate {b['linkage']:.1%} → {af['linkage']:.1%}; min k {b['min_k']} → {af['min_k']}; "
+           f"utility {r['utility']['score']:.3f}; target {'met' if r['target_met'] else 'NOT met'}; {r['runtime_seconds']} s")
+
+
 def cmd_run(a) -> int:
     sc = Scenario.from_dict(json.loads(Path(a.scenario).read_text(encoding="utf-8"))) if a.scenario else Scenario()
     secret, _ = get_secret()  # one secret for every table -> same value, same token across tables
     out_root = Path(a.out)
-    gold_src = a.spans
-    profiles = None
-    if a.profile:
-        profiles = [ColumnProfile.from_dict(d) for d in json.loads(Path(a.profile).read_text(encoding="utf-8"))]
     out_root.mkdir(parents=True, exist_ok=True)
     tasks = a.kit_tasks.split(",") if a.kit_tasks else None
-    # names and places from every table in the run: the free-text recognizer of one table knows the people and
-    # places of the others (e.g. chat turns + customers table)
-    names, places = [], []
     if len(a.data) > 1:
-        for path in a.data:
-            t = load_table(path)
-            prof = profile_dataframe(t)
-            names += person_names(t, prof)
-            places += place_names(t, prof)
-    for path in a.data:
+        # several related tables: links detected, parents first, joined view protected, consistent pseudonyms
+        tables = {Path(p).stem: load_table(p) for p in a.data}
+        scenarios = {n: _table_scenario(a, sc, df, tasks) for n, df in tables.items()}
+        proj = run_project(tables, scenarios, links=[] if a.no_links else None, secret=secret,
+                           use_presidio=not a.no_presidio, progress=lambda m: _print(f"  .. {m}"))
+        for l in proj.links:
+            _print(f"link: {l['child']}.{l['child_col']} → {l['parent']}.{l['parent_col']} ({l['kind']}, "
+                   f"coverage {l['coverage']:.0%}, integrity after protection {l.get('integrity', 0):.0%})")
+        for n in proj.order:
+            _write(proj.results[n], n, out_root)
+        (out_root / "reports").mkdir(exist_ok=True)
+        (out_root / "reports" / "project.json").write_text(to_json(proj.to_dict()), encoding="utf-8")
+        _print(f"wrote {len(proj.order)} tables + row maps + reports to {out_root}")
+    else:
+        path = a.data[0]
         df = load_table(path)
         name = Path(path).stem
         gold, gold_col = None, None
-        if gold_src and len(a.data) == 1:
-            if str(gold_src).endswith(".jsonl"):   # the kit's format, keyed by record id
+        if a.spans:
+            if str(a.spans).endswith(".jsonl"):   # the kit's format, keyed by record id
                 if not a.spans_id_col:
                     raise SystemExit("--spans-id-col is required for .jsonl ground truth (e.g. note_id)")
                 id_to_row = {str(v): i for i, v in enumerate(df[a.spans_id_col])}
-                gold_col, gold = load_gold(gold_src, id_to_row)
+                gold_col, gold = load_gold(a.spans, id_to_row)
                 gold_col = a.spans_text_col
             else:
-                gold_col, gold = load_gold(json.loads(Path(gold_src).read_text(encoding="utf-8")))
-        if a.kit_scenario:
-            table_sc = kit.scenario_from_kit(a.kit_scenario, list(df.columns), tasks, seed=sc.seed)
-        else:
-            table_sc = Scenario.from_dict({**sc.to_dict(), "attacker_qis": [c for c in sc.attacker_qis if c in df.columns],
-                                           "target": sc.target if sc.target in df.columns else None,
-                                           "key_columns": [c for c in sc.key_columns if c in df.columns]})
-        if table_sc.target is None and table_sc.task_type in ("classification", "regression"):
-            table_sc.task_type = "descriptive"
-        res = run(df, table_sc, profiles=profiles if len(a.data) == 1 else None, gold=gold,
-                  gold_column=gold_col, secret=secret, use_presidio=not a.no_presidio, progress=lambda m: _print(f"  .. {m}"),
-                  extra_names=names, extra_places=places)
-        # kit conventions: same table file name, original column names, rowmap_<table>.csv (never publish the row map)
-        res.export_table().to_csv(out_root / f"{name}.csv", index=False)
-        res.rowmap.to_csv(out_root / f"rowmap_{name}.csv", index=False)
-        rep_dir = out_root / "reports"
-        rep_dir.mkdir(exist_ok=True)
-        (rep_dir / f"{name}.report.json").write_text(to_json(res.report), encoding="utf-8")
-        (rep_dir / f"{name}.report.html").write_text(render_html(res.report), encoding="utf-8")
-        r = res.report
-        b, af = r["metrics"]["before"], r["metrics"]["after"]
-        _print(f"{name}: re-identification rate {b['linkage']:.1%} → {af['linkage']:.1%}; min k {b['min_k']} → {af['min_k']}; "
-               f"utility {r['utility']['score']:.3f}; target {'met' if r['target_met'] else 'NOT met'}; {r['runtime_seconds']} s")
-        _print(f"  wrote {out_root / (name + '.csv')} + rowmap_{name}.csv + reports/{name}.report.*")
+                gold_col, gold = load_gold(json.loads(Path(a.spans).read_text(encoding="utf-8")))
+        profiles = [ColumnProfile.from_dict(d) for d in json.loads(Path(a.profile).read_text(encoding="utf-8"))] \
+            if a.profile else None
+        res = run(df, _table_scenario(a, sc, df, tasks), profiles=profiles, gold=gold, gold_column=gold_col,
+                  secret=secret, use_presidio=not a.no_presidio, progress=lambda m: _print(f"  .. {m}"))
+        _write(res, name, out_root)
     if a.kit_scenario:
         _print(f"score with the kit: pets-eval scorecard --original <kit>/data/<dataset> --protected {out_root} "
                f"--scenario {a.kit_scenario}")
@@ -169,6 +180,7 @@ def main(argv=None) -> int:
     p.add_argument("--no-presidio", action="store_true", help="regex-only text redaction")
     p.add_argument("--kit-scenario", help="official starter-kit scenario id, e.g. HEALTH-S1")
     p.add_argument("--kit-tasks", help="comma-separated kit utility tasks to keep (default: all non-conflicting)")
+    p.add_argument("--no-links", action="store_true", help="several tables: protect them independently (no link detection)")
     p.set_defaults(fn=cmd_run)
     p = sub.add_parser("kit-scenarios", help="list official kit scenarios that apply to a table")
     p.add_argument("data")
