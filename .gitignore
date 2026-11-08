@@ -14,3 +14,6 @@ pets_transformer/.pets_secret
 
 # generated synthetic sample (recreated by data/generate_sample.py or the "Load sample dataset" button)
 pets_transformer/data/sample/
+
+# internal working notes (kept locally)
+KIT_SUMMARY.md

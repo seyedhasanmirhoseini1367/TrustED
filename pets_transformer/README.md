@@ -157,4 +157,4 @@ Risk is measured against the modelled threat model only (ours and the kit's publ
 re-identification rates are empirical, not a formal guarantee like DP; greedy search is not globally optimal;
 free-text recall is below 100 % (98–99 % on the kit's template-generated text, likely lower on real text);
 pseudonyms are linkable across releases that share a secret.
-The report lists these for every run. See `../KIT_SUMMARY.md` for the kit analysis and open gaps.
+The report lists these for every run.
